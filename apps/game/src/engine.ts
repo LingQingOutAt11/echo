@@ -1,6 +1,6 @@
 import { DIMENSIONS, type Dimensions, type Dimension, type Card } from './data'
 
-export type Animal = { id: string; emoji: string; name: string; title: string; tagline: string; vector: Dimensions }
+export type Animal = { id: string; emoji: string; name: string; title: string; tagline: string; image: string; vector: Dimensions }
 
 const clamp = (value: number) => Math.round(Math.max(0, Math.min(100, value)))
 
@@ -28,7 +28,7 @@ export function scoreAnswers(cards: Card[], answers: Record<string, string>) {
   return { dimensions, tags: [...new Set(tags)], dealBreakers: [...new Set(dealBreakers)].slice(0, 3) }
 }
 
-const animal = (id: string, emoji: string, name: string, title: string, tagline: string, vector: number[]): Animal => ({ id, emoji, name, title, tagline, vector: Object.fromEntries(DIMENSIONS.map(({ id }, index) => [id, vector[index]])) as Dimensions })
+const animal = (id: string, emoji: string, name: string, title: string, tagline: string, vector: number[]): Animal => ({ id, emoji, name, title, tagline, image: `/animals/${name}.webp`, vector: Object.fromEntries(DIMENSIONS.map(({ id }, index) => [id, vector[index]])) as Dimensions })
 export const ANIMALS: Animal[] = [
   animal('A01', '🦦', '海獭', '探索陪伴者', '什么都想试，但希望有人一起试', [85,70,75,80,75,40,35,80,55,70,80,75]), animal('A02', '🦊', '狐狸', '机敏独行者', '看起来随和，其实心里有数', [70,80,60,75,55,75,50,50,60,65,45,80]), animal('A03', '🐧', '企鹅', '忠诚守护者', '慢热但长情，认定了就很稳', [45,60,55,30,70,70,85,60,75,25,70,50]), animal('A04', '🦥', '树懒', '慢热观察家', '不是冷，是在加载中', [30,65,25,40,50,85,40,25,90,15,40,35]),
   animal('A05', '🦁', '狮子', '气场主导者', '习惯拿主意，但不一定爱控场', [65,55,90,50,45,80,75,70,40,55,55,60]), animal('A06', '🐰', '兔子', '敏感回应者', '需要被看见，也需要被回应', [50,70,70,45,90,35,45,55,50,40,85,55]), animal('A07', '🐺', '哈士奇', '社交悍匪', '见人就嗨，聊天从不冷场', [90,45,85,95,50,30,20,95,40,98,60,90]), animal('A08', '🦫', '卡皮巴拉', '松弛大师', '情绪稳定到像开了勿扰模式', [40,55,35,50,25,50,30,45,98,20,50,60]),
@@ -48,8 +48,45 @@ export function dimensionHighlights(dimensions: Dimensions) { return [...DIMENSI
 export function insight(animal: Animal, dimensions: Dimensions) { const highlights = dimensionHighlights(dimensions).slice(0, 2).map((item) => `${item.label} ${item.score}`).join('、'); return `你是${animal.emoji}${animal.name}——${highlights}；${animal.tagline}。` }
 const combos: Record<string, string> = { 'A07:A08': '哈皮组合', 'A07:A09': '猫狗危机', 'A09:A10': '猫狗组合', 'A11:A13': '夜蝶组合', 'A05:A06': '狮兔组合', 'A03:A14': '稳如泰山', 'A17:A20': '效率×共情', 'A08:A18': '双倍松弛', 'A04:A15': '话痨×树懒' }
 export function animalCombo(a?: Animal, b?: Animal) { return a?.id && b?.id ? combos[[a.id, b.id].sort().join(':')] : undefined }
+export type ChemistryReport = {
+  total: number
+  common: string[]
+  complements: string[]
+  friction: string[]
+  redLine: boolean
+  combo?: string
+  judgment: string
+  firstMessage: string
+}
 
-export function chemistry(a: Dimensions, b: Dimensions, tagsA: string[] = [], tagsB: string[] = []) {
+export type IcebreakerGame = {
+  id: 'constellation' | 'bridge' | 'relay' | 'treasure'
+  name: string
+  reason: string
+  mechanic: string
+  goal: string
+}
+
+const gameCatalog: IcebreakerGame[] = [
+  { id: 'constellation', name: '共同点亮星图', reason: '你们的社交节奏差异明显，适合用两颗星一起找到同一片天空。', mechanic: '双方分别移动自己的光标，合并触碰同色星点。', goal: '在 60 秒内共同点亮 8 颗星星。' },
+  { id: 'bridge', name: '搭桥回家', reason: '你们的计划与随性互补，适合一起搭出一条能走通的路。', mechanic: '双方轮流放置桥板，让小动物走到终点。', goal: '共同放置 6 块桥板并抵达终点。' },
+  { id: 'relay', name: '默契接力', reason: '你们在主动与边界上有互补，适合用接力把节奏交给彼此。', mechanic: '一方收集光点，另一方负责开启下一段路线。', goal: '接力收集 10 个光点，不让能量归零。' },
+  { id: 'treasure', name: '隐藏卡寻宝', reason: '你们的匹配节奏轻松，适合用 NFC 隐藏卡开启一场短途寻宝。', mechanic: '读取隐藏卡后，双方在地图上协作找出三个宝箱。', goal: '找到 3 个宝箱并把隐藏卡送给对方。' },
+]
+
+export function selectIcebreakerGame(a: Dimensions, b: Dimensions, report: ChemistryReport): IcebreakerGame {
+  const socialContrast = Math.abs((a.social_battery ?? 50) - (b.social_battery ?? 50))
+  const planningContrast = Math.abs((a.planning ?? 50) - (b.planning ?? 50)) + Math.abs((a.spontaneity ?? 50) - (b.spontaneity ?? 50))
+  if (socialContrast >= 30) return gameCatalog[0]
+  if (planningContrast >= 70) return gameCatalog[1]
+  if (report.complements.length) return gameCatalog[2]
+  return gameCatalog[3]
+}
+
+export function icebreakerGames() { return gameCatalog }
+
+
+export function chemistry(a: Dimensions, b: Dimensions, tagsA: string[] = [], tagsB: string[] = []): ChemistryReport {
   const differences = DIMENSIONS.map(({ id, label }) => ({ id, label, diff: Math.abs(a[id] - b[id]) }))
   const similarity = (1 - differences.reduce((sum, item) => sum + item.diff, 0) / (DIMENSIONS.length * 100)) * 40
   const common = differences.filter((item) => item.diff < 15).sort((x, y) => x.diff - y.diff).slice(0, 3).map((item) => `你们在${item.label}上很接近。`)

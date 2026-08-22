@@ -35,4 +35,5 @@
       <text class="btn-arrow">→</text>
     </button>
   </view>
+  <button class="secondary-btn" bindtap="scanCard">NFC / 扫码获取隐藏卡</button>
 </view>

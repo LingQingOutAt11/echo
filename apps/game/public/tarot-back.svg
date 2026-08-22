@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 500" role="img" aria-labelledby="title desc">
+  <title id="title">AI Chemistry tarot card back</title>
+  <desc id="desc">A midnight blue tarot card back with a gold geometric star pattern.</desc>
+  <defs>
+    <pattern id="stars" width="48" height="48" patternUnits="userSpaceOnUse">
+      <path d="M24 5 27 20 43 24 27 28 24 43 21 28 5 24 21 20Z" fill="none" stroke="#f1c668" stroke-opacity=".42" stroke-width="1.2"/>
+      <circle cx="24" cy="24" r="5" fill="none" stroke="#f1c668" stroke-opacity=".24"/>
+    </pattern>
+    <radialGradient id="halo" cx="50%" cy="45%" r="55%">
+      <stop offset="0" stop-color="#f1c668" stop-opacity=".18"/>
+      <stop offset="1" stop-color="#f1c668" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="300" height="500" rx="18" fill="#0b1426"/>
+  <rect x="12" y="12" width="276" height="476" rx="12" fill="url(#stars)" stroke="#f1c668" stroke-width="2"/>
+  <rect x="24" y="24" width="252" height="452" rx="8" fill="none" stroke="#f1c668" stroke-opacity=".66"/>
+  <rect x="36" y="36" width="228" height="428" rx="6" fill="none" stroke="#f1c668" stroke-opacity=".28" stroke-dasharray="2 7"/>
+  <circle cx="150" cy="250" r="94" fill="url(#halo)"/>
+  <circle cx="150" cy="250" r="66" fill="#0b1426" stroke="#f1c668" stroke-width="1.5"/>
+  <circle cx="150" cy="250" r="52" fill="none" stroke="#f1c668" stroke-opacity=".64" stroke-width="1.2" stroke-dasharray="1 7"/>
+  <path d="m150 190 14 45 45 15-45 15-14 45-14-45-45-15 45-15Z" fill="none" stroke="#f1c668" stroke-width="2"/>
+  <circle cx="150" cy="250" r="8" fill="#f1c668"/>
+  <path d="M150 58v34M150 408v34M58 250h34M208 250h34" stroke="#f1c668" stroke-opacity=".6" stroke-width="2" stroke-linecap="round"/>
+  <circle cx="150" cy="58" r="4" fill="#f1c668"/><circle cx="150" cy="442" r="4" fill="#f1c668"/><circle cx="58" cy="250" r="4" fill="#f1c668"/><circle cx="242" cy="250" r="4" fill="#f1c668"/>
+</svg>

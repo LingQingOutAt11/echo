@@ -1,0 +1,12 @@
+FROM oven/bun:1 AS build
+WORKDIR /app
+COPY . .
+WORKDIR /app/apps/game
+RUN bun install --frozen-lockfile 2>/dev/null || bun install
+ENV VITE_API_URL=http://81.70.185.14:3000
+RUN bun run build
+
+FROM nginx:alpine
+COPY --from=build /app/apps/game/dist /usr/share/nginx/html
+COPY deploy/nginx.conf /etc/nginx/conf.d/default.conf
+EXPOSE 80

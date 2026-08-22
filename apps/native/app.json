@@ -2,20 +2,31 @@
   "expo": {
     "name": "初见",
     "slug": "heikesong",
-    "scheme": "heikesong",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
-    "plugins": ["expo-dev-client", "expo-notifications"],
+    "scheme": "heikesong",
+    "plugins": [
+      "expo-dev-client",
+      "expo-notifications",
+      ["react-native-nfc-manager", { "nfcPermission": "用 NFC 标签进入对应的线下破冰活动。" }],
+      ["react-native-ble-manager", { "isBleRequired": false, "neverForLocation": true, "bluetoothAlwaysPermission": "用于发现附近正在等待破冰的手机。" }]
+    ],
     "ios": {
+      "bundleIdentifier": "com.heikesong.chujian",
+      "buildNumber": "1",
       "supportsTablet": true,
       "infoPlist": {
-        "NFCReaderUsageDescription": "用 NFC 标签进入对应的线下破冰活动。"
+        "NFCReaderUsageDescription": "用 NFC 标签进入对应的线下破冰活动。",
+        "NSBluetoothAlwaysUsageDescription": "用于发现附近正在等待破冰的手机。",
+        "NSBluetoothPeripheralUsageDescription": "用于让附近的手机发现破冰入口。"
       }
     },
     "android": {
-      "permissions": ["NFC", "POST_NOTIFICATIONS"],
+      "package": "com.heikesong.chujian",
+      "versionCode": 1,
+      "permissions": ["NFC", "POST_NOTIFICATIONS", "BLUETOOTH_SCAN", "BLUETOOTH_CONNECT", "BLUETOOTH_ADVERTISE", "ACCESS_FINE_LOCATION"],
       "adaptiveIcon": {
         "backgroundColor": "#0B1426",
         "foregroundImage": "./assets/android-icon-foreground.png",

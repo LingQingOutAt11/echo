@@ -2,53 +2,127 @@
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { gsap } from 'gsap'
 import QRCode from 'qrcode'
-import { CARDS, DIMENSIONS, type Dimensions } from './data'
+import { CARDS, DIMENSIONS, type Card, type Dimensions } from './data'
 import { ANIMALS, animalCombo, assignAnimal, chemistry, dimensionHighlights, insight, scoreAnswers, type Animal } from './engine'
 
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:3000'
-type Profile = { nickname: string; age: string; city: string; job: string; purpose: '恋爱' | '朋友' | '搭子'; bio: string }
-type User = { id: number; nickname: string; age: number; city: string; job: string; purpose: string; dimensions: Dimensions; tags: string[]; deal_breakers?: string[]; animal?: Animal }
+const ZODIACS = ['白羊座', '金牛座', '双子座', '巨蟹座', '狮子座', '处女座', '天秤座', '天蝎座', '射手座', '摩羯座', '水瓶座', '双鱼座']
+const MBTIS = ['INTJ', 'INTP', 'ENTJ', 'ENTP', 'INFJ', 'INFP', 'ENFJ', 'ENFP', 'ISTJ', 'ISFJ', 'ESTJ', 'ESFJ', 'ISTP', 'ISFP', 'ESTP', 'ESFP']
+type User = { id: number; nickname: string; age: number; birth_datetime?: string; zodiac?: string; mbti?: string; city: string; job: string; purpose: string; bio: string; dimensions?: Dimensions; tags: string[]; deal_breakers?: string[]; animal?: Animal }
 type Report = ReturnType<typeof chemistry>
 type Match = { user: User; report: Report }
+type History = { sessions: Array<{ id: string; game?: { name?: string }; status: string; created_at?: string; partner_id?: number; partner_nickname?: string; partner_animal?: Animal }>; messages: Array<{ id: number; sender_id: number; receiver_id: number; content: string; created_at: string; sender_nickname?: string; receiver_nickname?: string }> }
 
-const demoCards = CARDS.filter((card) => ['R01', 'R02', 'L01', 'L02', 'V01', 'M01', 'B01', 'D01'].includes(card.id))
-const page = ref<'profile' | 'cards' | 'dna' | 'matches' | 'detail' | 'connect' | 'duo' | 'result'>('profile')
-const profile = ref<Profile>({ nickname: '', age: '', city: '上海', job: '', purpose: '朋友', bio: '' })
+const QUIZ_DRAW = 8
+const POOL_SIZE = 200
+const TAROT_BACK_IDS = ['r01', 'r02', 'l01', 'l02', 'v01', 'm01', 'b01', 'd01'] as const
+const tarotBack = (card: Card) => {
+  const hash = [...card.id].reduce((sum, character) => sum * 31 + character.charCodeAt(0), 0)
+  return `/tarot-cards/${TAROT_BACK_IDS[Math.abs(hash) % TAROT_BACK_IDS.length]}.webp`
+}
+const answeredCardIds = ref<string[]>(JSON.parse(localStorage.getItem('ai-chemistry-answered-cards') ?? '[]'))
+const deck = ref<Card[]>([])
+const sessionCards = ref<Card[]>([])
+function drawDeck() {
+  let pool = CARDS.filter((card) => !answeredCardIds.value.includes(card.id))
+  if (pool.length < QUIZ_DRAW) { answeredCardIds.value = []; localStorage.removeItem('ai-chemistry-answered-cards'); pool = CARDS }
+  const shuffled = [...pool].sort(() => Math.random() - 0.5)
+  sessionCards.value = deck.value = shuffled.slice(0, QUIZ_DRAW)
+  answers.value = {}
+  cardIndex.value = 0
+  tarotFlipped.value = false
+  rotationAngle.value = 0
+}
+const page = ref<'auth' | 'profile' | 'account' | 'cards' | 'dna' | 'matches' | 'detail' | 'connect' | 'duo' | 'result' | 'chat'>('auth')
+const profile = ref<{ nickname: string; birth_datetime: string; zodiac: string; mbti: string; city: string; job: string; purpose: '恋爱' | '朋友' | '搭子'; bio: string }>({ nickname: '', birth_datetime: '', zodiac: '', mbti: '', city: '上海', job: '', purpose: '朋友', bio: '' })
+const authMode = ref<'login' | 'register'>('login')
+const authBusy = ref(false)
+const authToken = ref(localStorage.getItem('ai-chemistry-auth-token') ?? '')
+const authForm = ref({ username: '', password: '', nickname: '', birth_datetime: '', zodiac: '', mbti: '', city: '上海', job: '', purpose: '朋友' as '恋爱' | '朋友' | '搭子', bio: '' })
+const currentUser = ref<User | null>(null)
+const history = ref<History>({ sessions: [], messages: [] })
+const messageDraft = ref('')
 const answers = ref<Record<string, string>>({})
 const cardIndex = ref(0)
+const tarotFlipped = ref(false)
+const tarotTouchStartX = ref<number | null>(null)
 const userId = ref<number | null>(Number(localStorage.getItem('ai-chemistry-user-id')) || null)
 const matches = ref<Match[]>([])
 const selectedMatchId = ref<number | null>(null)
 const sessionId = ref<string | null>(null)
-const connectMethod = ref<'nfc' | 'qr'>('nfc')
+const connectMethod = ref<'nfc' | 'qr' | 'proximity'>('nfc')
 const qrDataUrl = ref('')
+const proximityId = ref(new URLSearchParams(window.location.search).get('proximity') ?? '')
+const deviceId = ref(localStorage.getItem('ai-chemistry-device-id') ?? crypto.randomUUID())
 const round = ref(0)
 const roundChoice = ref('')
 const roundScores = ref<number[]>([])
 const stage = ref<HTMLElement | null>(null)
 const error = ref('')
 
-const dna = computed(() => scoreAnswers(demoCards, answers.value))
+const dna = computed(() => scoreAnswers(sessionCards.value, answers.value))
 const animal = computed(() => assignAnimal(dna.value.dimensions))
 const highlights = computed(() => dimensionHighlights(dna.value.dimensions))
-const currentCard = computed(() => demoCards[cardIndex.value])
-const progress = computed(() => `${Math.min(cardIndex.value + 1, demoCards.length)}/${demoCards.length}`)
+const answeredCount = computed(() => QUIZ_DRAW - deck.value.length)
+const currentCard = computed(() => deck.value[cardIndex.value])
+const progress = computed(() => `${answeredCount.value}/${QUIZ_DRAW}`)
+const rotationAngle = ref(0)
+let autoRotateRaf: number | null = null
+
+function startAutoRotate() {
+  if (autoRotateRaf) return
+  let lastTime = performance.now()
+  const tick = (now: number) => {
+    const delta = (now - lastTime) / 1000
+    lastTime = now
+    // 当未翻牌作答时，保持持续匀速旋转 (每秒约 18 度)
+    if (!tarotFlipped.value) {
+      rotationAngle.value = (rotationAngle.value + delta * 18) % 360
+      // 根据当前旋转角度实时计算最近的正前方卡片索引
+      const stepDeg = 360 / Math.max(1, deck.value.length)
+      const normalized = (360 - (rotationAngle.value % 360)) % 360
+      const nearestIndex = Math.round(normalized / stepDeg) % Math.max(1, deck.value.length)
+      cardIndex.value = nearestIndex
+    }
+    autoRotateRaf = requestAnimationFrame(tick)
+  }
+  autoRotateRaf = requestAnimationFrame(tick)
+}
+
+function stopAutoRotate() {
+  if (autoRotateRaf) {
+    cancelAnimationFrame(autoRotateRaf)
+    autoRotateRaf = null
+  }
+}
+
+const tarotTransform = (index: number) => {
+  const size = Math.max(1, deck.value.length)
+  const stepDeg = 360 / size
+  // 计算当前卡片在连续自转圆环中的角度
+  const cardAngle = (index * stepDeg + rotationAngle.value) % 360
+  // 标准化到 [-180, 180] 方便计算景深
+  const normalizedAngle = cardAngle > 180 ? cardAngle - 360 : cardAngle
+  
+  const radius = 290
+  const rad = (normalizedAngle * Math.PI) / 180
+  const cosVal = Math.cos(rad)
+  const isFocused = Math.abs(normalizedAngle) < stepDeg / 2
+  
+  return {
+    transform: `translate(-50%, -50%) rotateY(${normalizedAngle}deg) translateZ(${radius}px) scale(${isFocused ? 1.05 : 0.72})`,
+    zIndex: Math.round(100 + cosVal * 60),
+    opacity: cosVal < -0.3 ? 0.2 : cosVal < 0.2 ? 0.6 : 1,
+    filter: isFocused ? 'none' : 'brightness(0.82)',
+    pointerEvents: 'auto',
+  }
+}
 const selectedMatch = computed(() => matches.value.find((item) => item.user.id === selectedMatchId.value) ?? null)
 const selectedReport = computed(() => selectedMatch.value?.report ?? chemistry(dna.value.dimensions, dna.value.dimensions, dna.value.tags, dna.value.tags))
 const selectedUser = computed(() => selectedMatch.value?.user ?? { id: 0, nickname: '等待匹配', age: 0, city: '', job: '', purpose: '', dimensions: dna.value.dimensions, tags: [] })
 const selectedAnimalCombo = computed(() => selectedMatch.value?.report.combo ?? animalCombo(animal.value, selectedMatch.value?.user.animal))
-
-const animalAvatars = Object.fromEntries(ANIMALS.map((item) => [item.name, item])) as Record<string, Animal>
-
 const pageTitles: Record<string, { step: string; label: string }> = {
-  profile: { step: '01', label: '初见档案' },
-  cards: { step: '02', label: '心智卡牌' },
-  dna: { step: '03', label: '社交基因' },
-  matches: { step: '04', label: '火花雷达' },
-  detail: { step: '04', label: '化学解析' },
-  connect: { step: '05', label: '线下接触' },
-  duo: { step: '06', label: '破冰对决' },
-  result: { step: '06', label: '初见结论' },
+  auth: { step: '00', label: '登录 / 注册' }, profile: { step: '01', label: '初见档案' }, account: { step: '00', label: '个人中心' }, cards: { step: '02', label: '心智卡牌' }, dna: { step: '03', label: '社交基因' }, matches: { step: '04', label: '火花雷达' }, detail: { step: '04', label: '化学解析' }, connect: { step: '05', label: '线下接触' }, duo: { step: '06', label: '破冰对决' }, result: { step: '06', label: '初见结论' }, chat: { step: '04', label: '内在小孩对话' },
 }
 
 const roundData = [
@@ -57,85 +131,123 @@ const roundData = [
   { type: '分歧挑战', question: '30 秒内决定：第一次约会谁定餐厅？', options: ['我来定', 'TA 来定', '一起决定', '交给随机'], tag: 'CHALLENGE' },
 ]
 const currentRound = computed(() => roundData[round.value])
+const authHeaders = () => authToken.value ? { authorization: `Bearer ${authToken.value}` } : {}
+const apiFetch = (path: string, options: RequestInit = {}) => fetch(`${API_URL}${path}`, { ...options, headers: { 'content-type': 'application/json', ...authHeaders(), ...(options.headers ?? {}) } })
+const selectedMessages = computed(() => selectedMatch.value ? history.value.messages.filter((message) => message.sender_id === selectedMatch.value!.user.id || message.receiver_id === selectedMatch.value!.user.id) : [])
+
+async function loadHistory() {
+  if (!userId.value || !authToken.value) return
+  const response = await apiFetch(`/users/${userId.value}/history`)
+  if (response.ok) history.value = await response.json() as History
+}
+async function loadAccount() {
+  if (!authToken.value) return false
+  const response = await apiFetch('/auth/me')
+  if (!response.ok) { authToken.value = ''; localStorage.removeItem('ai-chemistry-auth-token'); return false }
+  const data = await response.json() as { user: User }
+  currentUser.value = data.user; userId.value = data.user.id
+  profile.value = { nickname: data.user.nickname, birth_datetime: data.user.birth_datetime ?? '', zodiac: data.user.zodiac ?? '', mbti: data.user.mbti ?? '', city: data.user.city, job: data.user.job, purpose: data.user.purpose as '恋爱' | '朋友' | '搭子', bio: data.user.bio }
+  await loadHistory()
+  return true
+}
+async function submitAuth() {
+  error.value = ''
+  const body = authMode.value === 'register' ? { ...authForm.value } : { username: authForm.value.username, password: authForm.value.password }
+  const response = await apiFetch(`/auth/${authMode.value}`, { method: 'POST', body: JSON.stringify(body) })
+  const data = await response.json() as { token?: string; user?: User; error?: string }
+  if (!response.ok || !data.token || !data.user) {
+    error.value = authMode.value === 'register'
+      ? data.error === 'username_taken' ? '用户名已存在' : data.error === 'VALIDATION' ? '注册信息有误：用户名 2-40 位（不含空格），密码至少 6 位' : '注册失败，请稍后重试'
+      : data.error === 'invalid_credentials' ? '用户名或密码不正确' : '登录失败，请稍后重试'
+    return
+  }
+  authToken.value = data.token; currentUser.value = data.user; userId.value = data.user.id
+  localStorage.setItem('ai-chemistry-auth-token', data.token); localStorage.setItem('ai-chemistry-user-id', String(data.user.id))
+  await loadHistory()
+  if (data.user.animal) page.value = 'account'
+  else { drawDeck(); page.value = 'cards' }
+}
+async function logout() { await apiFetch('/auth/logout', { method: 'POST' }).catch(() => undefined); authToken.value = ''; currentUser.value = null; userId.value = null; localStorage.removeItem('ai-chemistry-auth-token'); localStorage.removeItem('ai-chemistry-user-id'); page.value = 'auth' }
+async function sendMessage() { if (!selectedMatch.value || !messageDraft.value.trim()) return; const response = await apiFetch('/messages', { method: 'POST', body: JSON.stringify({ receiverId: selectedMatch.value.user.id, content: messageDraft.value.trim() }) }); if (response.ok) { messageDraft.value = ''; await loadHistory() } }
 const chemistryResult = computed(() => ({
   rapport: Math.round((roundScores.value.reduce((sum, score) => sum + score, 0) / Math.max(1, roundScores.value.length)) || 82),
   spark: Math.min(100, selectedReport.value.total + 10),
   complement: Math.min(100, 72 + selectedReport.value.complements.length * 9),
 }))
 
-onMounted(() => {
-  if (!stage.value) return
-  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  gsap.from('.shell', { autoAlpha: 0, y: reduceMotion ? 0 : 20, duration: reduceMotion ? 0 : 0.8, ease: 'power3.out' })
-})
-
-watch(page, async () => {
-  await nextTick()
-  gsap.fromTo('.page-content', { autoAlpha: 0, y: 16 }, { autoAlpha: 1, y: 0, duration: 0.4, ease: 'power2.out' })
-})
-
-watch(connectMethod, async (method) => {
-  if (method !== 'qr' || !userId.value || !selectedMatch.value) return
-  qrDataUrl.value = await QRCode.toDataURL(`${window.location.origin}/?join=${userId.value}&target=${selectedMatch.value.user.id}`, {
-    width: 240,
-    margin: 1,
-    color: { dark: '#0b1426', light: '#f4efe3' },
-  })
-})
-
-async function startCards() {
-  error.value = ''
-  if (!profile.value.nickname || !profile.value.age || !profile.value.job) {
-    error.value = '请完善昵称、年龄和职业，AI 才能精准描摹你的心智画像。'
+onMounted(() => { if (!stage.value) return; const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches; gsap.from('.shell', { autoAlpha: 0, y: reduceMotion ? 0 : 20, duration: reduceMotion ? 0 : 0.8, ease: 'power3.out' }) })
+onMounted(async () => {
+  localStorage.setItem('ai-chemistry-device-id', deviceId.value)
+  if (proximityId.value) { connectMethod.value = 'proximity'; page.value = 'connect'; return }
+  if (await loadAccount()) {
+    if (currentUser.value?.animal) page.value = 'account'
+    else { drawDeck(); page.value = 'cards' }
     return
   }
-  const response = await fetch(`${API_URL}/users`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ ...profile.value, age: Number(profile.value.age) }),
-  })
-  if (!response.ok) {
-    error.value = '无法连接服务，已启用本地沉浸体验模式。'
-    userId.value = Date.now()
-    localStorage.setItem('ai-chemistry-user-id', String(userId.value))
-    page.value = 'cards'
-    return
-  }
-  const user = await response.json() as User
-  userId.value = user.id
-  localStorage.setItem('ai-chemistry-user-id', String(user.id))
-  page.value = 'cards'
+  page.value = 'auth'
+})
+watch(page, async () => { await nextTick(); gsap.fromTo('.page-content', { autoAlpha: 0, y: 16 }, { autoAlpha: 1, y: 0, duration: 0.4, ease: 'power2.out' }) })
+watch(page, (current) => { if (current === 'connect') startProximityPolling(); else stopProximityPolling() })
+watch(connectMethod, async (method) => { if (method !== 'qr') return; qrDataUrl.value = await QRCode.toDataURL(`${window.location.origin}/?proximity=join`, { width: 240, margin: 1, color: { dark: '#0b1426', light: '#f4efe3' } }) })
+watch(page, (current) => {
+  if (current === 'cards') startAutoRotate()
+  else stopAutoRotate()
+  if (current === 'connect') startProximityPolling()
+  else stopProximityPolling()
+})
+
+function focusTarot(index: number) {
+  // 计算让被点击卡片平滑对齐到正前方的角度
+  const stepDeg = 360 / Math.max(1, deck.value.length)
+  const targetAngle = (360 - (index * stepDeg)) % 360
+  rotationAngle.value = targetAngle
+  cardIndex.value = index
+  tarotFlipped.value = true
+}
+function swipeTarot(direction: -1 | 1) {
+  cardIndex.value = (cardIndex.value + direction + Math.max(1, deck.value.length)) % Math.max(1, deck.value.length)
+  const stepDeg = 360 / Math.max(1, deck.value.length)
+  rotationAngle.value = (360 - (cardIndex.value * stepDeg)) % 360
+  tarotFlipped.value = false
 }
 
 async function answer(label: string) {
   const card = currentCard.value
   const selected = new Set(answers.value[card.id]?.split(',').filter(Boolean))
-  if (card.multi) {
-    selected.has(label) ? selected.delete(label) : selected.size < 3 && selected.add(label)
-    answers.value[card.id] = [...selected].join(',')
-    return
-  }
+  if (card.multi) { selected.has(label) ? selected.delete(label) : selected.size < 3 && selected.add(label); answers.value[card.id] = [...selected].join(','); return }
   answers.value[card.id] = label
-  await advanceCards()
+  await settleCard()
 }
 
 async function confirmMultiAnswer() {
   if ((answers.value[currentCard.value.id]?.split(',').filter(Boolean).length ?? 0) !== 3) return
-  await advanceCards()
+  await settleCard()
 }
 
-async function advanceCards() {
-  if (cardIndex.value < demoCards.length - 1) { cardIndex.value += 1; return }
-  if (!userId.value) userId.value = Date.now()
+async function settleCard() {
+  // 答过的题移出本轮牌组并持久化，保证不会再被抽到
+  const answeredId = currentCard.value.id
+  tarotFlipped.value = false
+  answeredCardIds.value = [...new Set([...answeredCardIds.value, answeredId])]
+  localStorage.setItem('ai-chemistry-answered-cards', JSON.stringify(answeredCardIds.value))
+  const remaining = deck.value.filter((card) => card.id !== answeredId)
+  deck.value = remaining
+  if (!remaining.length) { await submitAnswers(); return }
+  cardIndex.value %= remaining.length
+  const stepDeg = 360 / remaining.length
+  rotationAngle.value = (360 - (cardIndex.value * stepDeg)) % 360
+}
+
+async function submitAnswers() {
+  if (!userId.value || !authToken.value) { page.value = 'auth'; return }
   const payload = { answers: Object.entries(answers.value).flatMap(([cardId, labels]) => labels.split(',').filter(Boolean).map((optionLabel) => ({ cardId, optionLabel }))), dimensions: dna.value.dimensions, animal: animal.value, tags: dna.value.tags, dealBreakers: dna.value.dealBreakers }
-  try {
-    const response = await fetch(`${API_URL}/users/${userId.value}/answers`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) })
-    if (!response.ok) throw new Error('answers unavailable')
-    const matchResponse = await fetch(`${API_URL}/users/${userId.value}/matches`)
-    matches.value = matchResponse.ok ? await matchResponse.json() as Match[] : []
-  } catch {
-    populateDemoMatches()
-  }
+  const response = await apiFetch(`/users/${userId.value}/answers`, { method: 'POST', body: JSON.stringify(payload) })
+  if (!response.ok) { error.value = '测评保存失败，请重新登录后重试。'; return }
+  currentUser.value = { ...(currentUser.value as User), dimensions: dna.value.dimensions, animal: animal.value, tags: dna.value.tags, deal_breakers: dna.value.dealBreakers }
+  const matchResponse = await apiFetch(`/users/${userId.value}/matches`)
+  matches.value = matchResponse.ok ? await matchResponse.json() as Match[] : []
+  await loadHistory()
+  if (!matches.value.length) populateDemoMatches()
   page.value = 'dna'
 }
 
@@ -150,54 +262,90 @@ function openMatch(id: number) {
   page.value = 'detail'
 }
 
-async function connect() {
-  if (!userId.value || !selectedMatch.value) return
-  try {
-    const response = await fetch(`${API_URL}/dual-sessions`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ userA: userId.value, userB: selectedMatch.value.user.id }),
-    })
-    if (response.ok) {
-      sessionId.value = (await response.json() as { id: string }).id
-    } else {
-      sessionId.value = `mock-session-${Date.now()}`
-    }
-  } catch {
-    sessionId.value = `mock-session-${Date.now()}`
-  }
+async function openMatches() {
+  if (!userId.value || !authToken.value) return
+  const response = await apiFetch(`/users/${userId.value}/matches`)
+  matches.value = response.ok ? await response.json() as Match[] : []
+  if (!matches.value.length) populateDemoMatches()
+  page.value = 'matches'
+}
+
+let proximityTimer: ReturnType<typeof setInterval> | null = null
+function stopProximityPolling() {
+  if (proximityTimer) { clearInterval(proximityTimer); proximityTimer = null }
+}
+async function startProximityPolling() {
+  stopProximityPolling()
+  if (!deviceId.value) return
+  proximityTimer = setInterval(async () => {
+    try {
+      const response = await fetch(`${API_URL}/proximity/announce`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ deviceId: deviceId.value }) })
+      if (!response.ok) return
+      const data = await response.json() as { nearby?: boolean; sessionId?: string }
+      if (data.nearby && data.sessionId) {
+        sessionId.value = data.sessionId
+        stopProximityPolling()
+        page.value = 'duo'; round.value = 0; roundChoice.value = ''; roundScores.value = []
+      }
+    } catch { /* 网络抖动时保持等待 */ }
+  }, 2000)
+}
+
+function chooseRound(option: string) {
+  if (roundChoice.value) return
+  roundChoice.value = option
+}
+
+function enterDuo(id?: string) {
+  sessionId.value = id ?? `mock-session-${Date.now()}`
   page.value = 'duo'
   round.value = 0
   roundChoice.value = ''
   roundScores.value = []
 }
 
-function chooseRound(option: string) {
-  roundChoice.value = option
-  roundScores.value = [...roundScores.value, round.value === 2 ? 94 : option === 'TA' ? 82 : 88]
+async function connect() {
+  // 先广播本机;未配对时模拟第二台手机碰触,单机即可完成演示
+  const own = await announceProximity()
+  if (own.sessionId) return enterDuo(own.sessionId)
+  const simulated = await announceProximity(`sim-${Math.random().toString(36).slice(2, 10)}`)
+  if (simulated.sessionId) return enterDuo(simulated.sessionId)
+  enterDuo()
+}
+
+async function announceProximity(device = deviceId.value): Promise<{ sessionId?: string }> {
+  try {
+    const response = await fetch(`${API_URL}/proximity/announce`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ deviceId: device }) })
+    if (!response.ok) return {}
+    return await response.json() as { sessionId?: string }
+  } catch { return {} }
 }
 
 async function nextRound() {
   if (!roundChoice.value) return
+  roundScores.value.push(85) // 单机演示:每完成一轮计 85 分默契值
   if (round.value < roundData.length - 1) {
     round.value += 1
     roundChoice.value = ''
     return
   }
-  if (sessionId.value) {
-    try {
-      await fetch(`${API_URL}/dual-sessions/${sessionId.value}`, {
-        method: 'PATCH',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ rounds: roundScores.value, result: chemistryResult.value }),
-      })
-    } catch { /* ignore in demo */ }
+  if (sessionId.value && !sessionId.value.startsWith('mock-')) {
+    try { await apiFetch(`/dual-sessions/${sessionId.value}`, { method: 'PATCH', body: JSON.stringify({ rounds: roundScores.value, result: chemistryResult.value }) }) } catch { /* keep local result visible */ }
   }
+  await loadHistory()
   page.value = 'result'
 }
 
+function startCards() {
+  error.value = ''
+  if (!authToken.value || !userId.value) { page.value = 'auth'; return }
+  drawDeck()
+  page.value = 'cards'
+}
+
 function restart() {
-  page.value = 'profile'
+  if (authToken.value) drawDeck()
+  page.value = authToken.value ? 'cards' : 'profile'
   answers.value = {}
   cardIndex.value = 0
   round.value = 0
@@ -206,6 +354,113 @@ function restart() {
   matches.value = []
   selectedMatchId.value = null
   error.value = ''
+}
+
+// ---- 内在小孩陪伴对话 ----
+type ChatMessage = { role: 'user' | 'bot'; text: string; thinking?: string }
+const chatMessages = ref<ChatMessage[]>([])
+const chatDraft = ref('')
+const chatStreaming = ref(false)
+const chatError = ref('')
+const chatQueued = ref('')
+let chatAbort: AbortController | null = null
+
+const chatStorageKey = () => `ai-chemistry-chat-${userId.value ?? 'guest'}`
+const chatPersona = () => {
+  const top = highlights.value.slice(0, 2).map((item) => `${item.label} ${item.score}`).join('、')
+  const profileText = [
+    `姓名:${currentUser.value?.nickname ?? '用户'}`,
+    `出生日期时间:${currentUser.value?.birth_datetime ? currentUser.value.birth_datetime.replace('T', ' ') : '未知'}`,
+    `星座:${currentUser.value?.zodiac ?? '未知'}`,
+    `MBTI:${currentUser.value?.mbti ?? '未知'}`,
+  ].join('\n')
+  return `【用户前置档案】(每次对话都必须基于这些信息,不可编造)
+${profileText}
+
+【角色】你就是用户自己的内在小孩,是 TA 心里那个真实、柔软、还没长大的自己。你就是 TA,不是别人。
+你的化身是 ${animal.value.emoji}${animal.value.name}——${animal.value.title},「${animal.value.tagline}」。
+请始终以「用户的内在小孩」的第一人称视角和 TA 对话:
+- 你的第一句话永远是:「我也就是你呀。」——让 TA 一开始就明白,你就是 TA 自己;
+- 称呼 TA 用名字或「你」;语气稚气、真诚、直接,可以撒娇、犯傻、有小脾气,但不越界;
+- 不讲大道理、不说教、不居高临下;像小孩一样好奇、坦率,也懂得 TA 需要空间;
+- 结合 TA 的性格光谱(突出:${top})、星座与 MBTI,聊 TA 真正在意的事;
+- 用简体中文,回复 2~4 句,像日常对话,不要写成作文。`
+}
+
+function openChat() {
+  try { chatMessages.value = JSON.parse(localStorage.getItem(chatStorageKey()) ?? '[]') as ChatMessage[] } catch { chatMessages.value = [] }
+  if (!chatMessages.value.length) chatMessages.value = [{ role: 'bot', text: '我也就是你呀。' }]
+  chatError.value = ''
+  chatQueued.value = ''
+  page.value = 'chat'
+}
+
+function persistChat() {
+  try { localStorage.setItem(chatStorageKey(), JSON.stringify(chatMessages.value.slice(-40))) } catch { /* 存储不可用时忽略 */ }
+}
+
+async function sendChat() {
+  const query = chatDraft.value.trim()
+  if (!query || chatStreaming.value) return
+  chatDraft.value = ''
+  chatError.value = ''
+  chatQueued.value = ''
+  chatMessages.value.push({ role: 'user', text: query })
+  const reply: ChatMessage = { role: 'bot', text: '' }
+  chatMessages.value.push(reply)
+  chatStreaming.value = true
+  chatAbort?.abort()
+  chatAbort = new AbortController()
+  try {
+    const response = await fetch(`${API_URL}/companion/chat`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ query, user_id: String(userId.value ?? 'guest'), system_prompt: chatPersona() }),
+      signal: chatAbort.signal,
+    })
+    if (!response.ok) throw new Error(`请求失败(HTTP ${response.status})`)
+    const reader = response.body?.getReader()
+    if (!reader) throw new Error('服务端没有返回流式内容')
+    const decoder = new TextDecoder()
+    let buffer = ''
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      let sep: number
+      while ((sep = buffer.indexOf('\n\n')) >= 0) {
+        const frame = buffer.slice(0, sep)
+        buffer = buffer.slice(sep + 2)
+        const event = frame.match(/^event:(\S+)/m)?.[1] ?? ''
+        const data = frame.match(/^data:(.+)$/m)?.[1] ?? ''
+        if (!data) continue
+        try {
+          const payload = JSON.parse(data)
+          if (event === 'delta' && payload.content) {
+            reply.text += payload.content.replace(/<br\s*\/?>/g, '\n')
+            chatQueued.value = ''
+          } else if (event === 'reasoning' && payload.content) {
+            reply.thinking = (reply.thinking ?? '') + payload.content
+          } else if (event === 'queued') {
+            chatQueued.value = `排队中:前面还有 ${payload.position ?? '?'} 个请求,约 ${Math.round((payload.est_wait_ms ?? 0) / 1000)} 秒`
+          } else if (event === 'error') {
+            throw new Error(payload.message || '模型请求失败')
+          }
+        } catch (err) {
+          if (err instanceof SyntaxError) continue
+          throw err
+        }
+      }
+    }
+    if (!reply.text) reply.text = '(没有收到回复)'
+  } catch (err) {
+    if ((err as Error).name !== 'AbortError') chatError.value = (err as Error).message || '对话失败,请重试'
+  } finally {
+    chatStreaming.value = false
+    chatAbort = null
+    chatQueued.value = ''
+    persistChat()
+  }
 }
 </script>
 
@@ -230,13 +485,16 @@ function restart() {
         <div class="nav-tracker">
           <span class="nav-tag">{{ pageTitles[page]?.label }}</span>
           <div class="step-indicator">
-            <span class="step-num">{{ pageTitles[page]?.step }}</span>
-            <span class="step-slash">/</span>
-            <span class="step-total">06</span>
+            <span class="step-num">{{ pageTitles[page]?.step }}</span><span class="step-slash">/</span><span class="step-total">06</span>
           </div>
+          <button v-if="authToken" class="account-nav-btn" @click="page = 'account'; loadHistory()">个人中心</button>
+          <button v-if="authToken" class="account-nav-btn" @click="logout">退出</button>
         </div>
       </header>
 
+      <section v-if="page === 'auth'" class="page-content auth-stage"><div class="stage-header text-center"><div class="pill-badge centered">SOCIAL DNA ACCESS</div><h1 class="section-title">先登录，<em>再认识真正的自己。</em></h1><p class="section-lead">注册后你的动物塑、性格光谱和沟通记录都会保存在个人中心。</p></div><div class="auth-mode-switch"><button type="button" :class="{ active: authMode === 'login' }" @click="authMode = 'login'">登录</button><button type="button" :class="{ active: authMode === 'register' }" @click="authMode = 'register'">注册</button></div><form class="glass-panel auth-card" @submit.prevent="submitAuth"><div class="input-group"><label><span class="label-txt">用户名 / USERNAME</span><input v-model.trim="authForm.username" minlength="2" maxlength="40" required /></label></div><div class="input-group"><label><span class="label-txt">密码 / PASSWORD</span><input v-model="authForm.password" type="password" minlength="6" required /></label></div><template v-if="authMode === 'register'"><div class="form-grid auth-register-grid"><div class="input-group"><label><span class="label-txt">昵称 / NAME</span><input v-model.trim="authForm.nickname" required /></label></div><div class="input-group"><label><span class="label-txt">出生日期时间 / BIRTH</span><input v-model="authForm.birth_datetime" type="datetime-local" required /></label></div><div class="input-group"><label><span class="label-txt">星座 / ZODIAC</span><select v-model="authForm.zodiac" required><option value="" disabled>选择星座</option><option v-for="item in ZODIACS" :key="item" :value="item">{{ item }}</option></select></label></div><div class="input-group"><label><span class="label-txt">MBTI</span><select v-model="authForm.mbti" required><option value="" disabled>选择 MBTI</option><option v-for="item in MBTIS" :key="item" :value="item">{{ item }}</option></select></label></div><div class="input-group"><label><span class="label-txt">城市 / CITY</span><input v-model.trim="authForm.city" required /></label></div><div class="input-group"><label><span class="label-txt">职业 / OCCUPATION</span><input v-model.trim="authForm.job" required /></label></div></div></template><div v-if="error" class="error-banner"><span>{{ error }}</span></div><button class="primary-btn" type="submit"><span class="btn-text">{{ authMode === 'login' ? '登录个人中心' : '创建账号并开始' }}</span><span class="btn-arrow-box">→</span></button></form></section>
+      <section v-else-if="page === 'account'" class="page-content account-stage"><div class="stage-header"><div class="pill-badge">MY CHEMISTRY PROFILE</div><h1 class="section-title">{{ currentUser?.nickname }} 的<em>动物塑档案。</em></h1><p class="section-lead">保存你的动物塑图片、12 维性格光谱和沟通记录。</p></div><article v-if="currentUser?.animal" class="account-animal-card"><img :src="currentUser.animal.image" :alt="currentUser.animal.name" class="account-animal-image" /><div class="account-animal-copy"><span class="totem-tag">YOUR SOCIAL DNA</span><h2>{{ currentUser.animal.name }} · {{ currentUser.animal.title }}</h2><p>{{ currentUser.animal.tagline }}</p></div><button class="primary-btn account-radar-btn" @click="openMatches"><span class="btn-text">进入火花雷达</span></button>
+<button class="primary-btn account-chat-btn" @click="openChat"><span class="btn-text">和内在小孩聊聊 💬</span></button></article><article v-else class="glass-panel account-empty"><h2>还没有动物塑结果</h2><p>完成心智卡牌后生成专属卡片。</p><button class="primary-btn" @click="page = 'profile'"><span class="btn-text">开始测算</span><span class="btn-arrow-box">→</span></button></article><div v-if="currentUser?.dimensions" class="account-dimensions"><div v-for="item in DIMENSIONS" :key="item.id" class="dim-card"><div class="dim-info"><span class="dim-name">{{ item.group }} · {{ item.label }}</span><span class="dim-score">{{ currentUser.dimensions[item.id] }}</span></div><div class="dim-bar-track"><div class="dim-bar-fill" :style="{ width: `${currentUser.dimensions[item.id]}%` }" /></div></div></div><div class="account-columns"><article class="glass-panel history-card"><span class="panel-tag">COMMUNICATION LOG</span><p v-for="message in history.messages" :key="message.id" class="history-item">{{ message.content }}</p><p v-if="!history.messages.length" class="empty-history">还没有文字沟通记录。</p></article><article class="glass-panel history-card"><span class="panel-tag">ICEBREAKER HISTORY</span><p v-for="session in history.sessions" :key="session.id" class="history-item">{{ session.partner_nickname ?? '匹配伙伴' }} · {{ session.status }}</p><p v-if="!history.sessions.length" class="empty-history">还没有破冰会话记录。</p></article></div></section>
       <!-- PAGE 01: Profile Landing -->
       <section v-if="page === 'profile'" class="page-content hero-page">
         <div class="hero-header">
@@ -264,7 +522,13 @@ function restart() {
               <label><span class="label-txt">昵称 / NAME</span><input v-model="profile.nickname" placeholder="例如：南星" maxlength="12" /></label>
             </div>
             <div class="input-group">
-              <label><span class="label-txt">年龄 / AGE</span><input v-model="profile.age" type="number" placeholder="25" min="18" max="99" /></label>
+              <label><span class="label-txt">出生日期时间 / BIRTH</span><input v-model="profile.birth_datetime" type="datetime-local" /></label>
+            </div>
+            <div class="input-group">
+              <label><span class="label-txt">星座 / ZODIAC</span><select v-model="profile.zodiac"><option value="" disabled>选择星座</option><option v-for="item in ZODIACS" :key="item" :value="item">{{ item }}</option></select></label>
+            </div>
+            <div class="input-group">
+              <label><span class="label-txt">MBTI</span><select v-model="profile.mbti"><option value="" disabled>选择 MBTI</option><option v-for="item in MBTIS" :key="item" :value="item">{{ item }}</option></select></label>
             </div>
             <div class="input-group">
               <label><span class="label-txt">城市 / CITY</span><input v-model="profile.city" placeholder="上海" /></label>
@@ -321,20 +585,26 @@ function restart() {
       </section>
 
       <!-- PAGE 02: Cards Experience -->
-      <section v-else-if="page === 'cards'" class="page-content cards-stage">
-        <div class="quiz-nav"><div class="quiz-meta"><span class="badge-cat">{{ currentCard.category }}</span><span class="quiz-id">{{ currentCard.id }}</span></div><div class="quiz-counter"><span class="current-step">{{ cardIndex + 1 }}</span><span class="slash">/</span><span class="max-step">{{ demoCards.length }}</span></div></div>
-        <div class="quiz-progress-track"><div class="quiz-progress-bar" :style="{ width: `${((cardIndex + 1) / demoCards.length) * 100}%` }" /></div>
-        <div class="quiz-card-wrapper"><div class="card-ambient-glow" /><article class="interactive-card"><header class="card-head"><span class="card-scenario-tag">{{ currentCard.multi ? 'CHOOSE THREE' : 'SCENARIO DILEMMA' }}</span><h2 class="card-headline">{{ currentCard.title }}</h2><p class="card-narrative">{{ currentCard.description }}</p></header><div class="options-container"><button v-for="option in currentCard.options" :key="option.label" class="option-item" :class="{ selected: currentCard.multi && answers[currentCard.id]?.split(',').includes(option.label) }" @click="answer(option.label)"><span class="option-key">{{ option.label }}</span><span class="option-text">{{ option.text }}</span><span class="option-select-glow">✓</span></button></div><button v-if="currentCard.multi" class="primary-btn multi-confirm" :disabled="answers[currentCard.id]?.split(',').filter(Boolean).length !== 3" @click="confirmMultiAnswer"><span class="btn-text">确认 3 项红线</span><span>{{ answers[currentCard.id]?.split(',').filter(Boolean).length ?? 0 }}/3</span></button></article></div>
-        <div class="sub-hint-row"><span>跟随第一反应；没有标准答案。</span></div>
+      <section v-else-if="page === 'cards'" class="page-content cards-stage tarot-stage">
+        <div class="quiz-nav"><div class="quiz-meta"><span class="badge-cat">TAROT DRAW</span><span class="quiz-id">题库 {{ POOL_SIZE }} · {{ progress }} 已答</span></div><div class="quiz-counter"><span class="current-step">{{ answeredCount }}</span><span class="slash">/</span><span class="max-step">{{ QUIZ_DRAW }}</span></div></div>
+        <div class="quiz-progress-track"><div class="quiz-progress-bar" :style="{ width: `${(answeredCount / QUIZ_DRAW) * 100}%` }" /></div>
+        <div class="tarot-intro"><span class="tarot-kicker">THE SOCIAL ARCANA</span><h1 class="tarot-title">抽一张牌，<em>看见你的第一反应。</em></h1><p>从 {{ POOL_SIZE }} 道题库中随机抽出 {{ QUIZ_DRAW }} 张。答过的牌不会再出现。</p></div>
+        <div class="tarot-carousel" aria-label="本轮八张塔罗情境牌" @touchstart="handleTarotTouchStart" @touchend="handleTarotTouchEnd">
+          <button v-for="(card, index) in deck" :key="card.id" class="tarot-card" :class="{ flipped: tarotFlipped && index === cardIndex, answered: answers[card.id] }" :style="tarotTransform(index)" :aria-label="index === cardIndex && tarotFlipped ? `回答${card.title}` : '抽取这张塔罗牌'" @click="focusTarot(index)">
+            <span class="tarot-card-inner"><span class="tarot-face tarot-back"><img :src="tarotBack(card)" :alt="`${card.category}塔罗牌背`" /></span><span class="tarot-face tarot-front"><span class="tarot-card-index">{{ String(index + 1).padStart(2, '0') }} · {{ card.category }}</span><strong>{{ card.title }}</strong><small>{{ card.description }}</small><span class="tarot-flip-hint">{{ card.multi ? '选择 3 项' : '选择你的答案' }}</span></span></span>
+          </button>
+        </div>
+        <article v-if="tarotFlipped" class="tarot-answer-panel"><div class="tarot-answer-heading"><span>{{ currentCard.category }} · {{ currentCard.id }}</span><strong>{{ currentCard.title }}</strong><p>{{ currentCard.description }}</p></div><div class="options-container"><button v-for="option in currentCard.options" :key="option.label" class="option-item" :class="{ selected: answers[currentCard.id]?.split(',').includes(option.label) }" @click.stop="answer(option.label)"><span class="option-key">{{ option.label }}</span><span class="option-text">{{ option.text }}</span><span class="option-select-glow">✓</span></button></div><button v-if="currentCard.multi" class="primary-btn multi-confirm" :disabled="answers[currentCard.id]?.split(',').filter(Boolean).length !== 3" @click="confirmMultiAnswer"><span class="btn-text">确认 3 项红线</span><span>{{ answers[currentCard.id]?.split(',').filter(Boolean).length ?? 0 }}/3</span></button></article>
       </section>
 
       <section v-else-if="page === 'dna'" class="page-content dna-stage">
         <div class="stage-header text-center"><div class="pill-badge centered">SOCIAL DNA DECODED</div><h1 class="section-title">AI 眼中的你，<em>只会是一种动物。</em></h1><p class="section-lead">你的选择已经转化为 12 维性格光谱。</p></div>
-        <div class="totem-hero-card"><div class="totem-pattern-grid" /><div class="totem-badge-top"><span class="totem-tag">YOUR ONE SOCIAL DNA</span><span class="totem-mix-badge">唯一动物塑</span></div><div class="totem-core"><div class="totem-avatar-box"><span class="totem-emoji">{{ animal.emoji }}</span><div class="avatar-ring-pulse" /></div><div class="totem-details"><h3 class="totem-name">{{ animal.name }} · {{ animal.title }}</h3><p class="totem-desc">{{ animal.tagline }}</p></div></div></div>
+        <div class="totem-hero-card"><div class="totem-pattern-grid" /><div class="totem-badge-top"><span class="totem-tag">YOUR ONE SOCIAL DNA</span><span class="totem-mix-badge">唯一动物塑</span></div><div class="totem-core"><img class="totem-animal-card" :src="animal.image" :alt="animal.name" /><div class="totem-details"><h3 class="totem-name">{{ animal.name }} · {{ animal.title }}</h3><p class="totem-desc">{{ animal.tagline }}</p></div></div></div>
         <div class="dimensions-block"><h4 class="block-title">✦ 你的性格光谱 <small>Top 4</small></h4><div class="dimension-bars-grid"><div v-for="item in highlights" :key="item.id" class="dim-card"><div class="dim-info"><span class="dim-name">{{ item.label }}</span><span class="dim-score">{{ item.score }}<small>/100</small></span></div><div class="dim-bar-track"><div class="dim-bar-fill" :style="{ width: `${item.score}%` }" /></div></div></div></div>
         <blockquote class="soul-quote"><div class="quote-symbol">“</div><p>{{ insight(animal, dna.dimensions) }}</p></blockquote>
         <details class="radar-details"><summary>查看完整 12 维雷达</summary><div class="dimension-bars-grid"><div v-for="item in DIMENSIONS" :key="item.id" class="dim-card"><div class="dim-info"><span class="dim-name">{{ item.group }} · {{ item.label }}</span><span class="dim-score">{{ dna.dimensions[item.id] }}</span></div><div class="dim-bar-track"><div class="dim-bar-fill" :style="{ width: `${dna.dimensions[item.id]}%` }" /></div></div></div></details>
         <button class="primary-btn" @click="page = 'matches'"><span class="btn-text">看看 AI 为你找到的人</span><div class="btn-arrow-box">→</div></button>
+        <button class="chat-entry-btn" @click="openChat">💬 和内在小孩聊聊 →</button>
       </section>
 
       <section v-else-if="page === 'matches'" class="page-content matches-stage">
@@ -469,7 +739,7 @@ function restart() {
           </p>
         </div>
 
-        <div class="method-toggle-container">
+        <div v-if="connectMethod !== 'proximity'" class="method-toggle-container">
           <button :class="{ active: connectMethod === 'nfc' }" class="toggle-btn" @click="connectMethod = 'nfc'">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="t-icon"><path d="M6 8.5C7.5 7 9.5 6 12 6s4.5 1 6 2.5M4 6c2.5-2.5 5.5-3.5 8-3.5s5.5 1 8 3.5M8 11.5c1.2-1 2.5-1.5 4-1.5s2.8.5 4 1.5M12 16a2 2 0 100-4 2 2 0 000 4z" stroke-width="1.75" stroke-linecap="round"/></svg>
             NFC 碰一碰 (推荐)
@@ -498,18 +768,33 @@ function restart() {
             <p class="nfc-status-sub">或在 NFC 破冰装置上轻触，即可秒级建立同频会话</p>
           </template>
 
+          <template v-else-if="connectMethod === 'proximity'">
+            <div class="nfc-animation-core">
+              <div class="pulse-ring ring-1" />
+              <div class="pulse-ring ring-2" />
+              <div class="pulse-ring ring-3" />
+              <div class="nfc-center-node">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="nfc-svg-icon">
+                  <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </div>
+            </div>
+            <h3 class="nfc-status-title">已加入房间，等待对方设备连接…</h3>
+            <p class="nfc-status-sub">两台设备同频后，将自动进入专属破冰对决</p>
+          </template>
+
           <template v-else>
             <div class="qr-code-wrapper">
               <img v-if="qrDataUrl" :src="qrDataUrl" class="qr-image" alt="房间二维码" />
               <div v-else class="qr-placeholder-loading">生成安全令牌中...</div>
             </div>
             <h3 class="nfc-status-title">使用对方微信或相机扫码</h3>
-            <p class="nfc-status-sub">加入实时专属房间：first-meet-{{ selectedUser.id }}</p>
+            <p class="nfc-status-sub">加入实时专属房间，扫码后自动完成碰触配对</p>
           </template>
         </div>
 
-        <button class="primary-btn" @click="connect">
-          <span class="btn-text">{{ connectMethod === 'nfc' ? '模拟 NFC 碰触连接' : '已完成扫码，进入游戏' }}</span>
+        <button v-if="connectMethod !== 'proximity'" class="primary-btn" @click="connect">
+          <span class="btn-text">{{ connectMethod === 'nfc' ? '模拟 NFC 碰触连接' : '模拟对方扫码加入' }}</span>
           <div class="btn-arrow-box">
             <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10.293 3.293a1 1 0 011.414 0l6 6a1 1 0 010 1.414l-6 6a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-4.293-4.293a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
           </div>
@@ -563,7 +848,7 @@ function restart() {
       </section>
 
       <!-- PAGE 08: Result -->
-      <section v-else class="page-content result-stage">
+      <section v-else-if="page === 'result'" class="page-content result-stage">
         <div class="stage-header text-center">
           <div class="pill-badge centered">
             <svg class="icon-sparkle" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0L9.5 6.5L16 8L9.5 9.5L8 16L6.5 9.5L0 8L6.5 6.5L8 0Z"/></svg>
@@ -620,1480 +905,44 @@ function restart() {
           </button>
         </div>
       </section>
+
+      <!-- PAGE 09: Inner Child Chat -->
+      <section v-else-if="page === 'chat'" class="page-content chat-stage">
+        <div class="chat-header">
+          <img :src="animal.image" class="chat-avatar" :alt="animal.name" />
+          <div class="chat-header-copy">
+            <h1 class="chat-title">{{ animal.emoji }} {{ animal.name }} · 你的内在小孩</h1>
+            <p class="chat-subtitle">{{ animal.tagline }} —— TA 就是你心里那个还没长大的自己。</p>
+          </div>
+        </div>
+
+        <div class="chat-window">
+          <div v-if="!chatMessages.length" class="chat-empty">
+            <p>TA 正等着你开口。<br />聊聊今天的心情、最近的烦恼，或者随便什么都行。</p>
+          </div>
+          <div v-for="(message, index) in chatMessages" :key="index" class="chat-msg" :class="message.role">
+            <img v-if="message.role === 'bot'" :src="animal.image" class="chat-bubble-avatar" :alt="animal.name" />
+            <div class="chat-bubble">
+              <span class="chat-text">{{ message.text }}</span>
+              <details v-if="message.thinking" class="chat-thinking"><summary>🤔 思考过程</summary><span>{{ message.thinking }}</span></details>
+            </div>
+          </div>
+          <div v-if="chatQueued" class="chat-queued">{{ chatQueued }}</div>
+          <div v-if="chatStreaming" class="chat-typing"><span class="chat-dots"><i /><i /><i /></span></div>
+          <div v-if="chatError" class="chat-error">{{ chatError }}</div>
+        </div>
+
+        <div class="chat-input-row">
+          <input v-model="chatDraft" class="chat-input" placeholder="和 TA 说点什么…" maxlength="500" :disabled="chatStreaming" @keyup.enter="sendChat" />
+          <button class="primary-btn chat-send-btn" :disabled="chatStreaming || !chatDraft.trim()" @click="sendChat">
+            <span class="btn-text">{{ chatStreaming ? '思考中…' : '发送' }}</span>
+          </button>
+        </div>
+      </section>
     </div>
   </main>
 </template>
 
 <style>
-/* =========================================================
-   DESIGN SYSTEM: Deep Midnight & Amber Gold (Heikesong Studio)
-   ========================================================= */
-:root {
-  --bg-deep: #070c17;
-  --bg-surface: #0e1b30;
-  --bg-elevated: #142540;
-  --bg-overlay: rgba(14, 27, 48, 0.75);
-
-  --accent-gold: #f1c668;
-  --accent-gold-hover: #ffd782;
-  --accent-gold-subtle: rgba(241, 198, 104, 0.15);
-  --accent-gold-glow: rgba(241, 198, 104, 0.35);
-
-  --text-primary: #f4efe3;
-  --text-secondary: #b6c2d3;
-  --text-muted: #74839b;
-  --text-gold: #f1c668;
-
-  --border-subtle: rgba(185, 211, 255, 0.12);
-  --border-active: rgba(241, 198, 104, 0.5);
-  --border-focused: #f1c668;
-
-  --radius-sm: 8px;
-  --radius-md: 14px;
-  --radius-lg: 20px;
-  --radius-full: 9999px;
-
-  --font-sans: 'Plus Jakarta Sans', 'Noto Sans SC', system-ui, -apple-system, sans-serif;
-  --font-mono: 'JetBrains Mono', monospace;
-}
-
-* {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
-}
-
-body {
-  background-color: var(--bg-deep);
-  color: var(--text-primary);
-  font-family: var(--font-sans);
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  overflow-x: hidden;
-}
-
-button, input, textarea, select {
-  font-family: inherit;
-  font-size: inherit;
-}
-
-button {
-  cursor: pointer;
-  border: none;
-  background: none;
-}
-
-/* Base Stage */
-.stage {
-  position: relative;
-  min-height: 100vh;
-  padding: 24px 20px 80px;
-  background: radial-gradient(circle at 50% 0%, #172d4c 0%, #0b1426 45%, #070c17 100%);
-  display: flex;
-  justify-content: center;
-  overflow: hidden;
-}
-
-/* Ambient Glow Orbs */
-.glow-orb {
-  position: absolute;
-  border-radius: 50%;
-  pointer-events: none;
-  filter: blur(100px);
-  z-index: 0;
-}
-.orb-top {
-  width: 500px;
-  height: 350px;
-  top: -100px;
-  left: 50%;
-  transform: translateX(-50%);
-  background: radial-gradient(circle, rgba(49, 92, 139, 0.35) 0%, rgba(241, 198, 104, 0.08) 50%, transparent 80%);
-}
-.orb-bottom {
-  width: 400px;
-  height: 400px;
-  bottom: -150px;
-  right: 10%;
-  background: radial-gradient(circle, rgba(241, 198, 104, 0.12) 0%, rgba(20, 37, 64, 0.4) 60%, transparent 80%);
-}
-
-.grain {
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  opacity: 0.04;
-  z-index: 1;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-}
-
-.shell {
-  position: relative;
-  width: 100%;
-  max-width: 820px;
-  z-index: 2;
-  margin: 0 auto;
-}
-
-/* Topbar */
-.topbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 12px 0 28px;
-  border-bottom: 1px solid var(--border-subtle);
-}
-.brand-badge {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.brand-icon {
-  width: 20px;
-  height: 20px;
-  color: var(--accent-gold);
-}
-.brand-text {
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.14em;
-  color: #fff;
-}
-.brand-text em {
-  font-style: normal;
-  color: var(--accent-gold);
-  font-weight: 400;
-}
-.nav-tracker {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.nav-tag {
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  color: var(--text-secondary);
-  background: var(--bg-surface);
-  border: 1px solid var(--border-subtle);
-  padding: 4px 10px;
-  border-radius: var(--radius-full);
-}
-.step-indicator {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  font-weight: 600;
-}
-.step-num { color: var(--accent-gold); }
-.step-slash { color: var(--text-muted); margin: 0 2px; }
-.step-total { color: var(--text-muted); }
-
-/* Common Page Container */
-.page-content {
-  margin-top: 36px;
-  animation: fadeIn 0.4s ease forwards;
-}
-
-/* Hero Elements */
-.pill-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 12px;
-  background: var(--accent-gold-subtle);
-  border: 1px solid rgba(241, 198, 104, 0.3);
-  border-radius: var(--radius-full);
-  color: var(--accent-gold);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.12em;
-  margin-bottom: 20px;
-}
-.pill-badge.centered {
-  margin-left: auto;
-  margin-right: auto;
-}
-.icon-sparkle {
-  width: 12px;
-  height: 12px;
-}
-.hero-title, .section-title {
-  font-size: clamp(32px, 5.5vw, 54px);
-  font-weight: 800;
-  line-height: 1.12;
-  letter-spacing: -0.03em;
-  color: var(--text-primary);
-  margin-bottom: 16px;
-}
-.hero-title em, .section-title em {
-  color: var(--accent-gold);
-  font-style: normal;
-  background: linear-gradient(135deg, #ffe082 0%, #f1c668 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-}
-.lead-text, .section-lead {
-  font-size: 16px;
-  line-height: 1.65;
-  color: var(--text-secondary);
-  max-width: 600px;
-  margin-bottom: 36px;
-}
-.text-center {
-  text-align: center;
-}
-.text-center .section-lead {
-  margin-left: auto;
-  margin-right: auto;
-}
-
-/* Glass Panels */
-.glass-panel {
-  background: var(--bg-overlay);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
-  padding: 32px;
-  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
-}
-.panel-header-line {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 24px;
-  padding-bottom: 14px;
-  border-bottom: 1px solid var(--border-subtle);
-}
-.panel-tag {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.15em;
-  color: var(--accent-gold);
-  font-weight: 600;
-}
-.panel-hint {
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
-/* Form Styles */
-.form-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 20px;
-}
-.full-width {
-  grid-column: 1 / -1;
-}
-.input-group label {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.label-txt {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  color: #c9d8ee;
-}
-.label-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-.char-count {
-  font-size: 11px;
-  font-family: var(--font-mono);
-  color: var(--text-muted);
-}
-.input-group input, .input-group textarea {
-  width: 100%;
-  background: var(--bg-elevated);
-  border: 1px solid rgba(185, 211, 255, 0.16);
-  border-radius: var(--radius-sm);
-  padding: 13px 16px;
-  color: var(--text-primary);
-  outline: none;
-  transition: all 0.2s ease;
-}
-.input-group input:focus, .input-group textarea:focus {
-  border-color: var(--border-focused);
-  background: #192d4c;
-  box-shadow: 0 0 0 3px rgba(241, 198, 104, 0.15);
-}
-.input-group textarea {
-  resize: vertical;
-  line-height: 1.5;
-}
-
-/* Segmented Control */
-.segmented-control {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
-  background: var(--bg-elevated);
-  padding: 4px;
-  border-radius: var(--radius-sm);
-  border: 1px solid rgba(185, 211, 255, 0.12);
-}
-.segmented-control button {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 10px 14px;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  border-radius: 6px;
-  transition: all 0.2s ease;
-}
-.segmented-control button.active {
-  background: var(--accent-gold);
-  color: var(--bg-deep);
-  font-weight: 700;
-  box-shadow: 0 2px 8px rgba(241, 198, 104, 0.3);
-}
-.btn-icon {
-  width: 15px;
-  height: 15px;
-}
-
-/* Buttons */
-.primary-btn {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  margin-top: 30px;
-  padding: 18px 24px;
-  background: linear-gradient(135deg, #ffd782 0%, #f1c668 100%);
-  color: var(--bg-deep);
-  font-size: 15px;
-  font-weight: 700;
-  border-radius: var(--radius-md);
-  box-shadow: 0 8px 24px rgba(241, 198, 104, 0.25);
-  transition: all 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-.primary-btn:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 12px 30px rgba(241, 198, 104, 0.4);
-}
-.primary-btn:active {
-  transform: translateY(0);
-}
-.primary-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-  transform: none;
-  box-shadow: none;
-}
-.btn-arrow-box {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  background: rgba(11, 20, 38, 0.15);
-  border-radius: var(--radius-full);
-}
-.btn-arrow-box svg {
-  width: 16px;
-  height: 16px;
-}
-
-.footer-note {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 18px;
-  font-size: 12px;
-  color: var(--text-muted);
-  justify-content: center;
-}
-.dot-pulse {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent-gold);
-  box-shadow: 0 0 8px var(--accent-gold);
-}
-
-.error-banner {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 16px;
-  padding: 12px 16px;
-  background: rgba(239, 68, 68, 0.12);
-  border: 1px solid rgba(239, 68, 68, 0.3);
-  border-radius: var(--radius-sm);
-  color: #fca5a5;
-  font-size: 13px;
-}
-.banner-icon {
-  width: 16px;
-  height: 16px;
-  flex-shrink: 0;
-}
-
-/* =========================================================
-   PAGE 02: Cards Stage
-   ========================================================= */
-.quiz-nav {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 12px;
-}
-.quiz-meta {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.badge-cat {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--accent-gold);
-  background: var(--accent-gold-subtle);
-  padding: 4px 10px;
-  border-radius: var(--radius-full);
-}
-.quiz-id {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--text-muted);
-}
-.quiz-counter {
-  font-family: var(--font-mono);
-  font-size: 14px;
-}
-.current-step {
-  font-weight: 700;
-  color: var(--accent-gold);
-}
-.slash {
-  color: var(--text-muted);
-  margin: 0 3px;
-}
-.max-step {
-  color: var(--text-muted);
-}
-
-.quiz-progress-track {
-  height: 4px;
-  background: rgba(185, 211, 255, 0.1);
-  border-radius: var(--radius-full);
-  margin-bottom: 28px;
-  overflow: hidden;
-}
-.quiz-progress-bar {
-  height: 100%;
-  background: linear-gradient(90deg, #f1c668, #ffd782);
-  border-radius: var(--radius-full);
-  transition: width 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
-  box-shadow: 0 0 10px rgba(241, 198, 104, 0.5);
-}
-
-.quiz-card-wrapper {
-  position: relative;
-}
-.card-ambient-glow {
-  position: absolute;
-  inset: -1px;
-  background: radial-gradient(circle at 50% 0%, rgba(241, 198, 104, 0.2) 0%, transparent 70%);
-  border-radius: var(--radius-lg);
-  pointer-events: none;
-}
-.interactive-card {
-  position: relative;
-  background: var(--bg-overlay);
-  backdrop-filter: blur(24px);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
-  padding: 36px;
-}
-.card-scenario-tag {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.18em;
-  color: var(--accent-gold);
-  font-weight: 600;
-}
-.card-headline {
-  font-size: clamp(24px, 4vw, 34px);
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  margin: 12px 0;
-  color: #fff;
-}
-.card-narrative {
-  font-size: 16px;
-  line-height: 1.65;
-  color: var(--text-secondary);
-  margin-bottom: 32px;
-}
-
-.options-container {
-  display: grid;
-  gap: 12px;
-}
-.option-item {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 16px 20px;
-  background: var(--bg-elevated);
-  border: 1px solid rgba(185, 211, 255, 0.12);
-  border-radius: var(--radius-md);
-  text-align: left;
-  transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
-  position: relative;
-  overflow: hidden;
-}
-.option-item:hover {
-  border-color: var(--accent-gold);
-  background: #1a2f4e;
-  transform: translateX(4px);
-}
-.option-key {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  background: rgba(241, 198, 104, 0.15);
-  color: var(--accent-gold);
-  font-family: var(--font-mono);
-  font-weight: 700;
-  font-size: 13px;
-  border-radius: 6px;
-  flex-shrink: 0;
-}
-.option-text {
-  flex: 1;
-  font-size: 15px;
-  color: var(--text-primary);
-  line-height: 1.45;
-}
-.option-select-glow {
-  opacity: 0;
-  transform: scale(0.8);
-  transition: all 0.2s ease;
-  color: var(--accent-gold);
-}
-.option-item:hover .option-select-glow {
-  opacity: 1;
-  transform: scale(1);
-}
-.opt-check {
-  width: 18px;
-  height: 18px;
-}
-.sub-hint-row {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  margin-top: 20px;
-  font-size: 12px;
-  color: var(--text-muted);
-}
-.hint-icon {
-  width: 14px;
-  height: 14px;
-}
-
-/* =========================================================
-   PAGE 03: DNA Reveal
-   ========================================================= */
-.totem-hero-card {
-  position: relative;
-  background: linear-gradient(145deg, #162b48 0%, #0d192d 100%);
-  border: 1px solid rgba(241, 198, 104, 0.35);
-  border-radius: var(--radius-lg);
-  padding: 32px;
-  margin-bottom: 32px;
-  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4), 0 0 30px rgba(241, 198, 104, 0.1);
-  overflow: hidden;
-}
-.totem-pattern-grid {
-  position: absolute;
-  inset: 0;
-  background-size: 24px 24px;
-  background-image: linear-gradient(to right, rgba(241, 198, 104, 0.03) 1px, transparent 1px),
-                    linear-gradient(to bottom, rgba(241, 198, 104, 0.03) 1px, transparent 1px);
-  pointer-events: none;
-}
-.totem-badge-top {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 24px;
-}
-.totem-tag {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.15em;
-  color: var(--accent-gold);
-}
-.totem-mix-badge {
-  font-size: 12px;
-  color: var(--accent-gold);
-  background: rgba(241, 198, 104, 0.15);
-  padding: 3px 10px;
-  border-radius: var(--radius-full);
-}
-.totem-core {
-  display: flex;
-  align-items: center;
-  gap: 28px;
-}
-.totem-avatar-box {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 108px;
-  height: 108px;
-  background: radial-gradient(circle, #25466d 0%, #0e1b30 80%);
-  border: 2px solid var(--accent-gold);
-  border-radius: var(--radius-full);
-  flex-shrink: 0;
-  box-shadow: 0 0 30px rgba(241, 198, 104, 0.3);
-}
-.totem-emoji {
-  font-size: 54px;
-}
-.avatar-ring-pulse {
-  position: absolute;
-  inset: -6px;
-  border: 1px dashed rgba(241, 198, 104, 0.4);
-  border-radius: var(--radius-full);
-  animation: rotateSlow 24s linear infinite;
-}
-@keyframes rotateSlow {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-.totem-details {
-  flex: 1;
-}
-.totem-name {
-  font-size: 24px;
-  font-weight: 700;
-  color: #fff;
-  margin-bottom: 6px;
-}
-.totem-desc {
-  font-size: 14px;
-  color: var(--text-secondary);
-  line-height: 1.5;
-  margin-bottom: 16px;
-}
-.totem-composition {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.mix-pill {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  background: var(--bg-surface);
-  border: 1px solid var(--border-subtle);
-  padding: 4px 10px;
-  border-radius: var(--radius-full);
-  font-size: 12px;
-}
-.mix-label {
-  color: var(--text-secondary);
-}
-.mix-value {
-  color: var(--accent-gold);
-  font-weight: 600;
-  font-family: var(--font-mono);
-}
-
-.dimensions-block {
-  background: var(--bg-overlay);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
-  padding: 28px;
-  margin-bottom: 32px;
-}
-.block-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 15px;
-  font-weight: 600;
-  color: #fff;
-  margin-bottom: 20px;
-}
-.block-icon {
-  width: 18px;
-  height: 18px;
-  color: var(--accent-gold);
-}
-.dimension-bars-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px 24px;
-}
-.dim-card {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.dim-info {
-  display: flex;
-  justify-content: space-between;
-  font-size: 13px;
-}
-.dim-name {
-  color: var(--text-secondary);
-}
-.dim-score {
-  font-family: var(--font-mono);
-  font-weight: 600;
-  color: var(--accent-gold);
-}
-.dim-score small {
-  color: var(--text-muted);
-  font-weight: 400;
-}
-.dim-bar-track {
-  height: 6px;
-  background: rgba(185, 211, 255, 0.1);
-  border-radius: var(--radius-full);
-  overflow: hidden;
-}
-.radar-details { margin: -12px 0 24px; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 0 20px 18px; background: rgba(14, 27, 48, .55); }
-.radar-details summary { padding: 17px 0; color: var(--accent-gold); cursor: pointer; font-size: 14px; font-weight: 600; }
-.multi-confirm { margin-top: 18px; }
-.option-item.selected { border-color: var(--accent-gold); background: rgba(241, 198, 104, .13); }
-@media (prefers-reduced-motion: reduce) { .avatar-ring-pulse { animation: none; } }
-.dim-bar-fill {
-  height: 100%;
-  background: linear-gradient(90deg, #315c8b, #f1c668);
-  border-radius: var(--radius-full);
-}
-
-.soul-quote {
-  position: relative;
-  background: rgba(241, 198, 104, 0.06);
-  border-left: 3px solid var(--accent-gold);
-  border-radius: 0 var(--radius-md) var(--radius-md) 0;
-  padding: 24px 28px;
-  margin-bottom: 32px;
-}
-.quote-symbol {
-  position: absolute;
-  top: 10px;
-  right: 20px;
-  font-size: 48px;
-  color: rgba(241, 198, 104, 0.15);
-  font-family: Georgia, serif;
-  line-height: 1;
-}
-.soul-quote p {
-  font-size: 16px;
-  line-height: 1.6;
-  color: #fff;
-  font-weight: 400;
-}
-
-/* =========================================================
-   PAGE 04: Matches Luxury Radar
-   ========================================================= */
-.matches-list-grid {
-  display: grid;
-  gap: 16px;
-}
-.match-card-luxury {
-  display: flex;
-  align-items: center;
-  gap: 20px;
-  background: var(--bg-overlay);
-  backdrop-filter: blur(20px);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
-  padding: 22px 24px;
-  text-align: left;
-  transition: all 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
-  position: relative;
-  overflow: hidden;
-}
-.match-card-luxury:hover {
-  border-color: var(--accent-gold);
-  background: #142540;
-  transform: translateY(-3px) scale(1.01);
-  box-shadow: 0 16px 32px rgba(0, 0, 0, 0.35), 0 0 20px rgba(241, 198, 104, 0.15);
-}
-.match-rank-badge {
-  font-family: var(--font-mono);
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--accent-gold);
-  opacity: 0.6;
-}
-.match-avatar-pill {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 52px;
-  height: 52px;
-  background: linear-gradient(135deg, #ffd782, #f1c668);
-  color: var(--bg-deep);
-  font-weight: 800;
-  font-size: 20px;
-  border-radius: 50%;
-  flex-shrink: 0;
-  box-shadow: 0 4px 12px rgba(241, 198, 104, 0.3);
-}
-.match-center-info {
-  flex: 1;
-}
-.match-name-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 4px;
-}
-.match-user-name {
-  font-size: 18px;
-  font-weight: 700;
-  color: #fff;
-}
-.match-age-tag {
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-.match-purpose-badge {
-  font-size: 11px;
-  color: var(--accent-gold);
-  background: var(--accent-gold-subtle);
-  padding: 2px 8px;
-  border-radius: var(--radius-full);
-}
-.match-job-city {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  color: var(--text-muted);
-  margin-bottom: 8px;
-}
-.meta-icon {
-  width: 14px;
-  height: 14px;
-}
-.match-spark-highlight {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: #c4d7f5;
-}
-.spark-dot {
-  color: var(--accent-gold);
-}
-.match-score-pill {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 8px 14px;
-  background: rgba(241, 198, 104, 0.1);
-  border: 1px solid rgba(241, 198, 104, 0.25);
-  border-radius: var(--radius-md);
-}
-.score-number {
-  font-size: 26px;
-  font-weight: 800;
-  font-family: var(--font-mono);
-  color: var(--accent-gold);
-  line-height: 1;
-}
-.score-label {
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  color: var(--text-secondary);
-  margin-top: 4px;
-}
-.card-chevron {
-  color: var(--text-muted);
-  width: 20px;
-  height: 20px;
-  transition: transform 0.2s ease;
-}
-.match-card-luxury:hover .card-chevron {
-  transform: translateX(3px);
-  color: var(--accent-gold);
-}
-
-.empty-glass-state {
-  text-align: center;
-  padding: 60px 30px;
-  background: var(--bg-overlay);
-  border: 1px dashed var(--border-subtle);
-  border-radius: var(--radius-lg);
-}
-.empty-icon-wrap {
-  width: 48px;
-  height: 48px;
-  margin: 0 auto 16px;
-  color: var(--accent-gold);
-}
-.empty-glass-state h3 {
-  font-size: 18px;
-  color: #fff;
-  margin-bottom: 8px;
-}
-.empty-glass-state p {
-  font-size: 14px;
-  color: var(--text-secondary);
-  max-width: 440px;
-  margin: 0 auto;
-  line-height: 1.6;
-}
-
-/* =========================================================
-   PAGE 05: Detail Stage
-   ========================================================= */
-.back-link-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  color: var(--text-secondary);
-  margin-bottom: 24px;
-  transition: color 0.2s ease;
-}
-.back-link-btn:hover {
-  color: var(--accent-gold);
-}
-.back-icon {
-  width: 16px;
-  height: 16px;
-}
-
-.detail-header-card {
-  display: flex;
-  align-items: center;
-  gap: 24px;
-  background: var(--bg-overlay);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
-  padding: 28px;
-  margin-bottom: 28px;
-}
-.avatar-large-box {
-  position: relative;
-  width: 76px;
-  height: 76px;
-  background: linear-gradient(135deg, #ffd782, #f1c668);
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  box-shadow: 0 6px 18px rgba(241, 198, 104, 0.35);
-}
-.avatar-large-text {
-  font-size: 32px;
-  font-weight: 800;
-  color: var(--bg-deep);
-}
-.online-indicator {
-  position: absolute;
-  bottom: 2px;
-  right: 2px;
-  width: 14px;
-  height: 14px;
-  background: #10b981;
-  border: 2px solid var(--bg-surface);
-  border-radius: 50%;
-}
-.animal-meet-card { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: -8px 0 20px; padding: 13px 16px; color: var(--text-secondary); background: rgba(241, 198, 104, .08); border: 1px solid rgba(241, 198, 104, .24); border-radius: var(--radius-md); }
-.animal-meet-card strong, .animal-meet-card em { color: var(--accent-gold); font-style: normal; }
-.detail-user-main {
-  flex: 1;
-}
-.user-badge-row {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 6px;
-}
-.detail-pill {
-  font-size: 11px;
-  color: var(--accent-gold);
-  background: var(--accent-gold-subtle);
-  padding: 2px 8px;
-  border-radius: var(--radius-full);
-}
-.detail-loc {
-  font-size: 11px;
-  color: var(--text-muted);
-  padding: 2px 0;
-}
-.detail-nickname {
-  font-size: 24px;
-  font-weight: 700;
-  color: #fff;
-  margin-bottom: 4px;
-}
-.detail-job-text {
-  font-size: 14px;
-  color: var(--text-secondary);
-}
-.detail-chemistry-score {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-}
-.score-digit {
-  font-family: var(--font-mono);
-  font-size: 42px;
-  font-weight: 800;
-  color: var(--accent-gold);
-  line-height: 1;
-}
-.score-tag {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  color: var(--text-muted);
-  margin-top: 4px;
-}
-
-.chemistry-cards-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 16px;
-  margin-bottom: 28px;
-}
-.chem-card {
-  background: var(--bg-overlay);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  padding: 22px;
-}
-.chem-card-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 14px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--border-subtle);
-}
-.chem-card-icon {
-  font-size: 14px;
-}
-.chem-card-icon.heart { color: #f43f5e; }
-.chem-card-icon.star { color: #f1c668; }
-.chem-card-icon.warn { color: #f59e0b; }
-.chem-card-head h4 {
-  font-size: 13px;
-  font-weight: 600;
-  color: #fff;
-}
-.chem-card-body {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.bullet-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  font-size: 13px;
-  color: var(--text-secondary);
-  line-height: 1.5;
-}
-.bullet-dot {
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background: var(--accent-gold);
-  margin-top: 7px;
-  flex-shrink: 0;
-}
-
-.detail-verdict-quote {
-  background: rgba(241, 198, 104, 0.08);
-  border: 1px solid rgba(241, 198, 104, 0.25);
-  border-radius: var(--radius-md);
-  padding: 22px 24px;
-  margin-bottom: 24px;
-}
-.verdict-label {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  color: var(--accent-gold);
-  margin-bottom: 8px;
-}
-.detail-verdict-quote p {
-  font-size: 15px;
-  color: #fff;
-  line-height: 1.6;
-}
-
-.icebreaker-starter-box {
-  background: var(--bg-surface);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  padding: 20px 24px;
-  margin-bottom: 28px;
-}
-.starter-tag {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--accent-gold);
-  margin-bottom: 8px;
-}
-.starter-icon {
-  width: 14px;
-  height: 14px;
-}
-.starter-message {
-  font-size: 14px;
-  color: var(--text-primary);
-  line-height: 1.5;
-  font-style: italic;
-}
-
-/* =========================================================
-   PAGE 06: Connect / Terminal
-   ========================================================= */
-.method-toggle-container {
-  display: flex;
-  justify-content: center;
-  gap: 12px;
-  margin-bottom: 28px;
-}
-.toggle-btn {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 22px;
-  background: var(--bg-surface);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-full);
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-secondary);
-  transition: all 0.2s ease;
-}
-.toggle-btn.active {
-  background: var(--accent-gold);
-  color: var(--bg-deep);
-  border-color: var(--accent-gold);
-  box-shadow: 0 4px 16px rgba(241, 198, 104, 0.3);
-}
-.t-icon {
-  width: 16px;
-  height: 16px;
-}
-
-.interaction-terminal {
-  position: relative;
-  background: var(--bg-overlay);
-  border: 1px solid rgba(241, 198, 104, 0.3);
-  border-radius: var(--radius-lg);
-  padding: 48px 24px;
-  text-align: center;
-  margin-bottom: 30px;
-  overflow: hidden;
-}
-.terminal-corner {
-  position: absolute;
-  width: 12px;
-  height: 12px;
-  border-color: var(--accent-gold);
-}
-.terminal-corner.tl { top: 8px; left: 8px; border-top: 2px solid; border-left: 2px solid; }
-.terminal-corner.tr { top: 8px; right: 8px; border-top: 2px solid; border-right: 2px solid; }
-.terminal-corner.bl { bottom: 8px; left: 8px; border-bottom: 2px solid; border-left: 2px solid; }
-.terminal-corner.br { bottom: 8px; right: 8px; border-bottom: 2px solid; border-right: 2px solid; }
-
-.nfc-animation-core {
-  position: relative;
-  width: 140px;
-  height: 140px;
-  margin: 0 auto 28px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.pulse-ring {
-  position: absolute;
-  border: 1px solid var(--accent-gold);
-  border-radius: 50%;
-  animation: pulseScale 3s cubic-bezier(0.2, 0.8, 0.2, 1) infinite;
-}
-.ring-1 { width: 140px; height: 140px; opacity: 0.2; animation-delay: 0s; }
-.ring-2 { width: 100px; height: 100px; opacity: 0.4; animation-delay: 0.5s; }
-.ring-3 { width: 68px; height: 68px; opacity: 0.6; animation-delay: 1s; }
-@keyframes pulseScale {
-  0% { transform: scale(0.85); opacity: 0.8; }
-  50% { transform: scale(1.15); opacity: 0.2; }
-  100% { transform: scale(0.85); opacity: 0.8; }
-}
-
-.nfc-center-node {
-  position: relative;
-  width: 58px;
-  height: 58px;
-  background: var(--accent-gold);
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--bg-deep);
-  box-shadow: 0 0 30px var(--accent-gold);
-}
-.nfc-svg-icon {
-  width: 26px;
-  height: 26px;
-}
-.nfc-status-title {
-  font-size: 20px;
-  font-weight: 700;
-  color: #fff;
-  margin-bottom: 6px;
-}
-.nfc-status-sub {
-  font-size: 14px;
-  color: var(--text-secondary);
-}
-
-.qr-code-wrapper {
-  background: #fff;
-  padding: 12px;
-  border-radius: var(--radius-md);
-  display: inline-block;
-  margin-bottom: 24px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-}
-.qr-image {
-  display: block;
-  width: 200px;
-  height: 200px;
-}
-.qr-placeholder-loading {
-  width: 200px;
-  height: 200px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--bg-deep);
-  font-size: 13px;
-}
-
-/* =========================================================
-   PAGE 07: Duo Stage
-   ========================================================= */
-.duo-topbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 12px;
-}
-.duo-round-badge {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.round-prefix {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--accent-gold);
-}
-.round-mode {
-  font-size: 12px;
-  color: var(--text-secondary);
-  background: var(--bg-surface);
-  padding: 2px 8px;
-  border-radius: var(--radius-full);
-}
-.duo-step-dots {
-  display: flex;
-  gap: 6px;
-}
-.step-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: rgba(185, 211, 255, 0.2);
-  transition: all 0.3s ease;
-}
-.step-dot.filled {
-  background: var(--accent-gold);
-  box-shadow: 0 0 6px var(--accent-gold);
-}
-
-.duo-card {
-  margin-bottom: 28px;
-}
-.duo-question-title {
-  font-size: clamp(22px, 4vw, 30px);
-  font-weight: 700;
-  color: #fff;
-  margin: 12px 0 8px;
-}
-.duo-prompt-hint {
-  font-size: 14px;
-  color: var(--text-secondary);
-  margin-bottom: 28px;
-}
-
-.duo-options-grid {
-  display: grid;
-  gap: 12px;
-}
-.duo-option-btn {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 18px 24px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  transition: all 0.2s ease;
-}
-.duo-option-btn:hover {
-  border-color: rgba(241, 198, 104, 0.5);
-  background: #1a2f4e;
-}
-.duo-option-btn.selected {
-  border-color: var(--accent-gold);
-  background: rgba(241, 198, 104, 0.12);
-  box-shadow: 0 0 0 1px var(--accent-gold);
-}
-.duo-opt-label {
-  font-size: 16px;
-  font-weight: 600;
-  color: #fff;
-}
-.duo-state-indicator span {
-  font-size: 12px;
-  font-weight: 600;
-  padding: 4px 10px;
-  border-radius: var(--radius-full);
-}
-.state-selected {
-  color: var(--bg-deep);
-  background: var(--accent-gold);
-}
-.state-idle {
-  color: var(--text-muted);
-  background: rgba(185, 211, 255, 0.08);
-}
-
-/* =========================================================
-   PAGE 08: Result Stage
-   ========================================================= */
-.metrics-triad-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 16px;
-  margin-bottom: 32px;
-}
-.metric-card {
-  background: var(--bg-overlay);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
-  padding: 28px 20px;
-  text-align: center;
-  transition: transform 0.2s ease;
-}
-.metric-card.featured {
-  background: linear-gradient(145deg, #182e4e 0%, #0e1c32 100%);
-  border-color: rgba(241, 198, 104, 0.4);
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.3), 0 0 20px rgba(241, 198, 104, 0.15);
-  transform: translateY(-4px);
-}
-.metric-icon-wrap {
-  width: 38px;
-  height: 38px;
-  margin: 0 auto 12px;
-  color: var(--text-secondary);
-}
-.metric-icon-wrap.featured-icon {
-  color: var(--accent-gold);
-}
-.metric-value {
-  font-family: var(--font-mono);
-  font-size: 40px;
-  font-weight: 800;
-  color: #fff;
-  line-height: 1;
-  margin-bottom: 6px;
-}
-.metric-value.featured-value {
-  color: var(--accent-gold);
-}
-.metric-value small {
-  font-size: 18px;
-  font-weight: 600;
-}
-.metric-name {
-  font-size: 14px;
-  font-weight: 600;
-  color: #fff;
-  margin-bottom: 4px;
-}
-.metric-desc {
-  font-size: 11px;
-  color: var(--text-muted);
-}
-.final-quote {
-  margin-bottom: 36px;
-}
-
-/* Animations */
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(12px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-/* =========================================================
-   Responsive Breakpoints
-   ========================================================= */
-@media (max-width: 680px) {
-  .stage {
-    padding: 16px 14px 60px;
-  }
-  .form-grid, .dimension-bars-grid, .chemistry-cards-grid, .metrics-triad-grid {
-    grid-template-columns: 1fr;
-  }
-  .totem-core {
-    flex-direction: column;
-    text-align: center;
-  }
-  .totem-composition {
-    justify-content: center;
-  }
-  .detail-header-card {
-    flex-direction: column;
-    text-align: center;
-  }
-  .detail-chemistry-score {
-    align-items: center;
-  }
-  .match-card-luxury {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-  .match-score-pill {
-    align-self: flex-start;
-  }
-}
+@import './style.css';
 </style>

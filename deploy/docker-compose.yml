@@ -1,0 +1,33 @@
+# Heikesong standalone stack (独立于 xiaokai / yixue,不触碰其它服务)
+# 用法: docker compose -f deploy/docker-compose.yml -p heikesong up -d --build
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.api
+    image: heikesong/api:latest
+    container_name: heikesong-api
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: "3000"
+      COMPANION_API_KEY: ${COMPANION_API_KEY:-sk-hack-REPLACED}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.web
+    image: heikesong/web:latest
+    container_name: heikesong-web
+    restart: unless-stopped
+    ports:
+      - "8090:80"
+    depends_on:
+      - api

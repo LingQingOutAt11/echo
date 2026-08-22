@@ -1,0 +1,12 @@
+# Heikesong deploy context — keep image context lean
+.git
+node_modules
+**/node_modules
+**/dist
+**/.tmp-*
+.codegraph
+.serena
+memories
+微信图片_*.png
+apps/game/preview_themes.html
+compose.yaml

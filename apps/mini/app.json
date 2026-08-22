@@ -1,10 +1,10 @@
 {
-  "pages": ["pages/index/index"],
+  "pages": ["pages/index/index", "pages/game/game"],
   "window": {
     "navigationBarTitleText": "初见",
     "navigationBarBackgroundColor": "#0B1426",
     "navigationBarTextStyle": "white"
   },
-  "style": "v2",
+  "style": "v2", 
   "sitemapLocation": "sitemap.json"
 }

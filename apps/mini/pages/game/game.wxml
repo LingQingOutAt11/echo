@@ -1,1 +1,23 @@
-<web-view src="https://t.example.com/game"></web-view>
+<view class="game-page">
+  <view class="game-header">
+    <text class="eyebrow">TWO PLAYER CO-OP</text>
+    <text class="title">共同点亮星图</text>
+    <text class="copy">两个人一起完成目标；NFC 卡片会开启隐藏宝箱。</text>
+  </view>
+  <view class="progress-card">
+    <text class="progress">{{progress}} / 8</text>
+    <text class="goal">共同点亮 8 颗星星</text>
+  </view>
+  <view class="actions">
+    <button wx:for="{{stars}}" wx:key="*this" class="star" data-index="{{index}}" bindtap="markStar" disabled="{{item.done}}">
+      <text>{{item.done ? '已点亮' : '点亮第 ' + (index + 1) + ' 颗星'}}</text>
+    </button>
+  </view>
+  <view wx:if="{{entry}}" class="card-panel">
+    <text class="eyebrow">NFC HIDDEN CARD</text>
+    <text>{{cardMessage}}</text>
+    <button wx:if="!cardOwned" bindtap="claimCard">领取隐藏卡</button>
+    <button wx:else bindtap="transferCard">把卡送给 TA</button>
+  </view>
+  <button class="primary-btn" disabled="{{progress < 8}}" bindtap="finish">完成合作游戏</button>
+</view>

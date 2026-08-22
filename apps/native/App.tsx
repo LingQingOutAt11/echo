@@ -1,29 +1,43 @@
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
 import { Canvas, Circle, Group, RadialGradient, vec } from '@shopify/react-native-skia'
 import NfcManager, { Ndef, NfcTech } from 'react-native-nfc-manager'
+import BleManager from 'react-native-ble-manager'
+import Peripheral, { Permission, Property } from 'react-native-multi-ble-peripheral'
+import { Buffer } from 'buffer'
 import * as Notifications from 'expo-notifications'
 import { StatusBar } from 'expo-status-bar'
-import { useEffect, useState } from 'react'
-import { Alert, Linking, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
+import { useEffect, useRef, useState } from 'react'
+import { Alert, Linking, PermissionsAndroid, Platform, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
 import Animated, { useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated'
 import { WebView } from 'react-native-webview'
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://10.0.2.2:3000'
 const GAME_URL = process.env.EXPO_PUBLIC_GAME_URL ?? 'http://10.0.2.2:5173'
+const PROXIMITY_SERVICE = '7f4e0001-5b53-4a7c-9a9d-6a7c4e100001'
+const PROXIMITY_CHARACTERISTIC = '7f4e0001-5b53-4a7c-9a9d-6a7c4e100002'
+const PROXIMITY_DEVICE_KEY = 'heikesong-proximity-device'
 const queryClient = new QueryClient()
 
 type Room = { slug: string; title: string; gameUrl: string }
 type ChatMessage = { id: string; text: string; mine: boolean }
+type NfcEntry = { url: string; cardId?: string }
 
+function parseEntry(url: string): NfcEntry {
+  const parsed = new URL(url)
+  return { url, cardId: parsed.searchParams.get('card') ?? undefined }
+}
 function App() {
   const [gameOpen, setGameOpen] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
   const [chatOpen, setChatOpen] = useState(false)
   const [draft, setDraft] = useState('')
   const [socket, setSocket] = useState<WebSocket>()
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    { id: 'welcome', text: '先从一个破冰问题开始吧：今晚你最期待遇到什么样的人？', mine: false },
-  ])
+  const [messages, setMessages] = useState<ChatMessage[]>([{ id: 'welcome', text: '先从一个破冰问题开始吧：今晚你最期待遇到什么样的人？', mine: false }])
+  const [gameUrl, setGameUrl] = useState(GAME_URL)
+  const deviceId = useRef(`${Date.now()}-${Math.random().toString(36).slice(2)}`)
+  const proximityTimer = useRef<ReturnType<typeof setInterval> | undefined>(undefined)
+  const peripheral = useRef<Peripheral | null>(null)
+  const proximityStarted = useRef(false)
   const scale = useSharedValue(1)
   const ringScale = useSharedValue(1)
 
@@ -44,25 +58,73 @@ function App() {
     },
   })
 
+  async function announceProximity() {
+    const response = await fetch(`${API_URL}/proximity/announce`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ deviceId: deviceId.current }) })
+    if (!response.ok) return
+    const state = await response.json() as { nearby?: boolean; sessionId?: string }
+    if (state.nearby && state.sessionId) {
+      setGameUrl(`${GAME_URL}?proximity=${encodeURIComponent(state.sessionId)}`)
+      setGameOpen(true)
+      clearInterval(proximityTimer.current)
+      proximityTimer.current = undefined
+    }
+  }
+
+  async function startProximity() {
+    if (proximityStarted.current) return
+    proximityStarted.current = true
+    if (Platform.OS === 'android' && Number(Platform.Version) >= 31) {
+      await PermissionsAndroid.requestMultiple([PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN, PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT, PermissionsAndroid.PERMISSIONS.BLUETOOTH_ADVERTISE])
+    }
+    try {
+      await BleManager.start()
+      await BleManager.scan({ serviceUUIDs: [PROXIMITY_SERVICE], seconds: 0, allowDuplicates: false })
+      let scanSubscription: ReturnType<typeof BleManager.onDiscoverPeripheral> | undefined
+      scanSubscription = BleManager.onDiscoverPeripheral(async (device) => {
+        if (device.name !== 'HEIKESONG_NEAR') return
+        await announceProximity()
+        scanSubscription?.remove()
+        await BleManager.stopScan().catch(() => undefined)
+      })
+      const blePeripheral = new Peripheral()
+      peripheral.current = blePeripheral
+      blePeripheral.on('ready', async () => {
+        await blePeripheral.addService(PROXIMITY_SERVICE, true)
+        await blePeripheral.addCharacteristic(PROXIMITY_SERVICE, PROXIMITY_CHARACTERISTIC, Property.READ | Property.NOTIFY, Permission.READABLE)
+        await Peripheral.setDeviceName('HEIKESONG_NEAR')
+        await blePeripheral.startAdvertising({ [PROXIMITY_SERVICE]: Buffer.from('near') }, { connectable: true })
+      })
+    } catch {
+      // BLE is optional; NFC and QR remain available when native BLE is unavailable.
+    }
+    proximityTimer.current = setInterval(() => announceProximity().catch(() => undefined), 2000)
+  }
+
   useEffect(() => {
     scale.value = withRepeat(withTiming(1.06, { duration: 2400 }), -1, true)
     ringScale.value = withRepeat(withTiming(1.22, { duration: 2400 }), -1, false)
     NfcManager.start().catch(() => undefined)
     Notifications.requestPermissionsAsync().catch(() => undefined)
+    startProximity().catch(() => undefined)
     const connection = new WebSocket(API_URL.replace(/^http/, 'ws') + '/ws')
     connection.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data) as { type?: string; content?: string }
         const content = data.content
-        if (data.type === 'message' && typeof content === 'string') {
-          setMessages((current) => [...current, { id: `${Date.now()}`, text: content, mine: false }])
-        }
+        if (data.type === 'message' && typeof content === 'string') setMessages((current) => [...current, { id: `${Date.now()}`, text: content, mine: false }])
       } catch {
         /* ignore malformed realtime events */
       }
     }
     setSocket(connection)
-    return () => connection.close()
+    return () => {
+      clearInterval(proximityTimer.current)
+      proximityTimer.current = undefined
+      BleManager.stopScan().catch(() => undefined)
+      peripheral.current?.stopAdvertising().catch(() => undefined)
+      peripheral.current?.destroy().catch(() => undefined)
+      connection.close()
+    }
   }, [scale, ringScale])
 
   async function scanNfc() {
@@ -71,12 +133,19 @@ function App() {
       const tag = await NfcManager.getTag()
       const record = tag?.ndefMessage?.find((item) => item.type?.[0] === Ndef.TNF_WELL_KNOWN)
       if (!record?.payload) throw new Error('未读取到 NDEF 链接')
-      await Linking.openURL(Ndef.uri.decodePayload(Uint8Array.from(record.payload)))
+      const entry = parseEntry(Ndef.uri.decodePayload(Uint8Array.from(record.payload)))
+      setGameUrl(entry.url)
+      setGameOpen(true)
     } catch (error) {
       Alert.alert('NFC 交互', error instanceof Error ? error.message : '读取已取消')
     } finally {
       NfcManager.cancelTechnologyRequest().catch(() => undefined)
     }
+  }
+
+  async function openGameManually() {
+    await announceProximity().catch(() => undefined)
+    setGameOpen(true)
   }
 
   function sendMessage() {
@@ -87,8 +156,7 @@ function App() {
     setDraft('')
   }
 
-  if (gameOpen) return <WebView source={{ uri: room.data?.gameUrl ?? GAME_URL }} onError={() => setGameOpen(false)} />
-
+  if (gameOpen) return <WebView source={{ uri: gameUrl || room.data?.gameUrl || GAME_URL }} onError={() => setGameOpen(false)} />
   return (
     <SafeAreaView style={styles.screen}>
       <StatusBar style="light" />
@@ -133,7 +201,7 @@ function App() {
 
         {/* Action Buttons */}
         <View style={styles.ctaGroup}>
-          <Pressable style={styles.primary} onPress={() => setGameOpen(true)}>
+          <Pressable style={styles.primary} onPress={openGameManually}>
             <Text style={styles.primaryText}>进入破冰游戏场</Text>
             <View style={styles.arrowBox}>
               <Text style={styles.arrowText}>→</Text>
