@@ -1,0 +1,38 @@
+<view class="screen">
+  <!-- Top Ambient Glow -->
+  <view class="glow-orb"></view>
+
+  <!-- Topbar Branding -->
+  <view class="topbar">
+    <view class="brand-row">
+      <view class="brand-dot"></view>
+      <text class="brand">HEIKESONG <text class="brand-em">/ 初见</text></text>
+    </view>
+    <view class="status-tag">OFFLINE READY</view>
+  </view>
+
+  <!-- Totem Core Icon Mark -->
+  <view class="totem-wrap">
+    <view class="totem-ring-outer"></view>
+    <view class="totem-circle">
+      <text class="mark">见</text>
+    </view>
+  </view>
+
+  <!-- Headline & Value Prop -->
+  <view class="content-body">
+    <view class="badge-pill">
+      <text class="badge-text">✦ PHYSICAL ICEBREAKER</text>
+    </view>
+    <text class="headline">一次碰触，\n<text class="headline-gold">开启心智共振。</text></text>
+    <text class="description">NFC 碰一碰，将现实中擦肩而过的陌生人带入专属沉浸破冰故事。</text>
+  </view>
+
+  <!-- CTA Action -->
+  <view class="action-wrap">
+    <button class="primary-btn" bindtap="openGame">
+      <text class="btn-text">进入破冰场</text>
+      <text class="btn-arrow">→</text>
+    </button>
+  </view>
+</view>

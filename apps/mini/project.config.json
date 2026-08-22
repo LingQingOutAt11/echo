@@ -1,0 +1,7 @@
+{
+  "appid": "touristappid",
+  "compileType": "miniprogram",
+  "projectname": "heikesong-mini",
+  "miniprogramRoot": "./",
+  "setting": { "es6": true, "minified": true, "postcss": true }
+}
