@@ -41,7 +41,7 @@ const app = new Elysia()
     const [source] = await database`SELECT id, nickname, age, city, job, purpose, dimensions, animal, tags, deal_breakers FROM users WHERE id = ${Number(params.id)} AND dimensions IS NOT NULL`
     if (!source) return status(404, { error: 'user_not_ready' })
     const candidates = await database`SELECT id, nickname, age, city, job, purpose, dimensions, animal, tags, deal_breakers FROM users WHERE id <> ${source.id} AND purpose = ${source.purpose} AND dimensions IS NOT NULL`
-    return candidates.map((candidate) => ({ user: candidate, report: chemistry(source.dimensions as Record<string, number>, candidate.dimensions as Record<string, number>, source.tags, candidate.tags) })).sort((a, b) => b.report.total - a.report.total).slice(0, 3)
+    return candidates.map((candidate) => ({ user: candidate, report: chemistry(source.dimensions as Record<string, number>, candidate.dimensions as Record<string, number>, source.tags, candidate.tags, source.deal_breakers, candidate.deal_breakers, source.animal, candidate.animal) })).sort((a, b) => b.report.total - a.report.total).slice(0, 3)
   }, { params: t.Object({ id: t.String({ pattern: '^\\d+$' }) }) })
   .post('/dual-sessions', async ({ body, status }) => {
     if (!database) return status(503, { error: 'database_required' })

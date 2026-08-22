@@ -1,14 +1,15 @@
-export type Dimension = 'explore' | 'deep_talk' | 'initiative' | 'spontaneity' | 'emotion' | 'boundary' | 'planning'
+export type Dimension = 'explore' | 'deep_talk' | 'initiative' | 'spontaneity' | 'emotion' | 'boundary' | 'planning' | 'social_battery' | 'chill' | 'chaos' | 'cling' | 'wit'
 export type Dimensions = Record<Dimension, number>
 export type Option = { label: string; text: string; weights?: Partial<Record<Dimension, number>>; tags?: string[] }
-export type Card = { id: string; category: string; title: string; description: string; options: Option[] }
+export type Card = { id: string; category: string; title: string; description: string; options: Option[]; multi?: boolean }
 
-export const DIMENSIONS: { id: Dimension; label: string }[] = [
-  { id: 'explore', label: '探索欲' }, { id: 'deep_talk', label: '深聊倾向' }, { id: 'initiative', label: '主动程度' },
-  { id: 'spontaneity', label: '随性程度' }, { id: 'emotion', label: '情绪敏感度' }, { id: 'boundary', label: '边界感' }, { id: 'planning', label: '计划性' },
+export const DIMENSIONS: { id: Dimension; label: string; group: string }[] = [
+  { id: 'explore', label: '探索欲', group: '行动轴' }, { id: 'deep_talk', label: '深聊力', group: '情感轴' }, { id: 'initiative', label: '主动值', group: '行动轴' }, { id: 'spontaneity', label: '随性值', group: '节奏轴' },
+  { id: 'emotion', label: '情绪雷达', group: '情感轴' }, { id: 'boundary', label: '边界力', group: '社交轴' }, { id: 'planning', label: '计划值', group: '节奏轴' }, { id: 'social_battery', label: '社交电量', group: '社交轴' },
+  { id: 'chill', label: '松弛感', group: '节奏轴' }, { id: 'chaos', label: '整活值', group: '行动轴' }, { id: 'cling', label: '黏人度', group: '情感轴' }, { id: 'wit', label: '玩梗力', group: '社交轴' },
 ]
 
-const card = (id: string, category: string, title: string, description: string, options: Option[]): Card => ({ id, category, title, description, options })
+const card = (id: string, category: string, title: string, description: string, options: Option[], multi = false): Card => ({ id, category, title, description, options, multi })
 
 export const CARDS: Card[] = [
   card('R01', '关系观', '对方变冷淡', '你们刚认识，对方连续三天晚上只回复你几句话。你会？', [
@@ -24,7 +25,7 @@ export const CARDS: Card[] = [
     { label: 'A', text: '没关系，来了就好', weights: { emotion: -10, spontaneity: 5 } }, { label: 'B', text: '直接问为什么不提前说', weights: { initiative: 15, boundary: 10 } }, { label: 'C', text: '开个玩笑缓解气氛', weights: { initiative: 10, deep_talk: 5 } }, { label: 'D', text: '觉得对方不尊重自己', weights: { boundary: 20, emotion: 10 }, tags: ['disrespect'] },
   ]),
   card('L01', '生活方式', '周末临时邀约', '周六早上 9 点，对方发来：「走，去爬山？」', [
-    { label: 'A', text: '5 分钟收拾，走', weights: { explore: 15, spontaneity: 20, initiative: 10 } }, { label: 'B', text: '问路线、吃什么', weights: { planning: 20, spontaneity: -10 } }, { label: 'C', text: '下次吧，今天想休息', weights: { spontaneity: -15, boundary: 10 } }, { label: 'D', text: '看对方想去哪里再决定', weights: { initiative: 5, spontaneity: 10 } },
+    { label: 'A', text: '5 分钟收拾，走', weights: { explore: 15, spontaneity: 20, initiative: 10, social_battery: 15 } }, { label: 'B', text: '问路线、吃什么', weights: { planning: 20, spontaneity: -10 } }, { label: 'C', text: '下次吧，今天想休息', weights: { spontaneity: -15, boundary: 10, social_battery: -10 } }, { label: 'D', text: '看对方想去哪里再决定', weights: { initiative: 5, spontaneity: 10 } },
   ]),
   card('L02', '生活方式', '五天旅行', '你们有 5 天假期，预算 5000。你会选择？', [
     { label: 'A', text: '极限户外', weights: { explore: 25, spontaneity: 15 } }, { label: 'B', text: '城市探索', weights: { explore: 15, planning: 10 } }, { label: 'C', text: '酒店躺平', weights: { spontaneity: -15, boundary: 10 } }, { label: 'D', text: '随便走走，不做攻略', weights: { spontaneity: 25, planning: -15 } }, { label: 'E', text: '做一份详细攻略', weights: { planning: 25, explore: 5 } },
@@ -65,9 +66,9 @@ export const CARDS: Card[] = [
   card('B04', '社交边界', '独处时间', '周末你想独处，但对方想一直待在一起。你会？', [
     { label: 'A', text: '今天陪 TA', weights: { emotion: 10, boundary: -10 } }, { label: 'B', text: '直接说需要空间', weights: { boundary: 20, initiative: 10 } }, { label: 'C', text: '安排半天各自活动', weights: { boundary: 15, planning: 10 } }, { label: 'D', text: '看对方状态再说', weights: { emotion: 10, initiative: -5 } },
   ]),
-  card('D01', '红线', '最无法接受', '以下行为你最无法接受哪个？', [
-    { label: 'A', text: '长期冷处理', tags: ['silent_treatment'] }, { label: 'B', text: '说谎', tags: ['lying'] }, { label: 'C', text: '控制欲强', tags: ['control'] }, { label: 'D', text: '情绪暴力', tags: ['emotional_abuse'] }, { label: 'E', text: '没有边界', tags: ['no_boundary'] },
-  ]),
+  card('D01', '红线', '最无法接受', '以下行为你最无法接受哪些？请选择 3 项。', [
+    { label: 'A', text: '长期冷处理', tags: ['silent_treatment'] }, { label: 'B', text: '说谎', tags: ['lying'] }, { label: 'C', text: '控制欲强', tags: ['control'] }, { label: 'D', text: '情绪暴力', tags: ['emotional_abuse'] }, { label: 'E', text: '极度邋遢', tags: ['messy'] }, { label: 'F', text: '没有边界', tags: ['no_boundary'] }, { label: 'G', text: '过度依赖', tags: ['over_dependence'] }, { label: 'H', text: '缺乏责任感', tags: ['irresponsible'] }, { label: 'I', text: '消费观差异', tags: ['money_conflict'] }, { label: 'J', text: '不尊重父母', tags: ['disrespect_parents'] },
+  ], true),
   card('D02', '红线', '临时取消', '如果 TA 经常不提前说就取消约会，你能接受吗？', [
     { label: 'A', text: '完全不能接受', tags: ['cancel_no_notice'] }, { label: 'B', text: '偶尔可以', weights: { boundary: 5 } }, { label: 'C', text: '看原因', weights: { deep_talk: 10 } }, { label: 'D', text: '可以接受', weights: { spontaneity: 10, boundary: -5 } },
   ]),

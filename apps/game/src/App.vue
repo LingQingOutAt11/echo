@@ -3,11 +3,11 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { gsap } from 'gsap'
 import QRCode from 'qrcode'
 import { CARDS, DIMENSIONS, type Dimensions } from './data'
-import { animalMix, chemistry, scoreAnswers } from './engine'
+import { ANIMALS, animalCombo, assignAnimal, chemistry, dimensionHighlights, insight, scoreAnswers, type Animal } from './engine'
 
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:3000'
 type Profile = { nickname: string; age: string; city: string; job: string; purpose: '恋爱' | '朋友' | '搭子'; bio: string }
-type User = { id: number; nickname: string; age: number; city: string; job: string; purpose: string; dimensions: Dimensions; tags: string[] }
+type User = { id: number; nickname: string; age: number; city: string; job: string; purpose: string; dimensions: Dimensions; tags: string[]; deal_breakers?: string[]; animal?: Animal }
 type Report = ReturnType<typeof chemistry>
 type Match = { user: User; report: Report }
 
@@ -29,21 +29,16 @@ const stage = ref<HTMLElement | null>(null)
 const error = ref('')
 
 const dna = computed(() => scoreAnswers(demoCards, answers.value))
-const mix = computed(() => animalMix(dna.value.dimensions))
+const animal = computed(() => assignAnimal(dna.value.dimensions))
+const highlights = computed(() => dimensionHighlights(dna.value.dimensions))
 const currentCard = computed(() => demoCards[cardIndex.value])
 const progress = computed(() => `${Math.min(cardIndex.value + 1, demoCards.length)}/${demoCards.length}`)
 const selectedMatch = computed(() => matches.value.find((item) => item.user.id === selectedMatchId.value) ?? null)
 const selectedReport = computed(() => selectedMatch.value?.report ?? chemistry(dna.value.dimensions, dna.value.dimensions, dna.value.tags, dna.value.tags))
 const selectedUser = computed(() => selectedMatch.value?.user ?? { id: 0, nickname: '等待匹配', age: 0, city: '', job: '', purpose: '', dimensions: dna.value.dimensions, tags: [] })
+const selectedAnimalCombo = computed(() => selectedMatch.value?.report.combo ?? animalCombo(animal.value, selectedMatch.value?.user.animal))
 
-const animalAvatars: Record<string, { symbol: string; badge: string; desc: string }> = {
-  海獭: { symbol: '🦦', badge: '破冰大师', desc: '好奇灵动，随时把平淡日常变冒险' },
-  狐狸: { symbol: '🦊', badge: '洞察先锋', desc: '敏锐深邃，一眼看穿社交表象' },
-  企鹅: { symbol: '🐧', badge: '靠谱底盘', desc: '温和严谨，守住秩序与真诚的温度' },
-  树懒: { symbol: '🦥', badge: '情绪绿洲', desc: '自在从容，自带安抚所有焦虑的场域' },
-  狮子: { symbol: '🦁', badge: '行动舵手', desc: '坦荡果决，有明确主张与热烈气场' },
-  兔子: { symbol: '🐰', badge: '同理共鸣', desc: '细腻敏锐，总能在微小细节里接住你' },
-}
+const animalAvatars = Object.fromEntries(ANIMALS.map((item) => [item.name, item])) as Record<string, Animal>
 
 const pageTitles: Record<string, { step: string; label: string }> = {
   profile: { step: '01', label: '初见档案' },
@@ -113,49 +108,41 @@ async function startCards() {
 }
 
 async function answer(label: string) {
-  answers.value[currentCard.value.id] = label
-  if (cardIndex.value < demoCards.length - 1) {
-    cardIndex.value += 1
+  const card = currentCard.value
+  const selected = new Set(answers.value[card.id]?.split(',').filter(Boolean))
+  if (card.multi) {
+    selected.has(label) ? selected.delete(label) : selected.size < 3 && selected.add(label)
+    answers.value[card.id] = [...selected].join(',')
     return
   }
-  if (!userId.value) {
-    userId.value = Date.now()
-  }
-  const payload = {
-    answers: Object.entries(answers.value).map(([cardId, optionLabel]) => ({ cardId, optionLabel })),
-    dimensions: dna.value.dimensions,
-    animal: mix.value,
-    tags: dna.value.tags,
-    dealBreakers: dna.value.tags.filter((tag) => ['silent_treatment', 'lying', 'control', 'emotional_abuse', 'no_boundary', 'cancel_no_notice'].includes(tag)),
-  }
+  answers.value[card.id] = label
+  await advanceCards()
+}
+
+async function confirmMultiAnswer() {
+  if ((answers.value[currentCard.value.id]?.split(',').filter(Boolean).length ?? 0) !== 3) return
+  await advanceCards()
+}
+
+async function advanceCards() {
+  if (cardIndex.value < demoCards.length - 1) { cardIndex.value += 1; return }
+  if (!userId.value) userId.value = Date.now()
+  const payload = { answers: Object.entries(answers.value).flatMap(([cardId, labels]) => labels.split(',').filter(Boolean).map((optionLabel) => ({ cardId, optionLabel }))), dimensions: dna.value.dimensions, animal: animal.value, tags: dna.value.tags, dealBreakers: dna.value.dealBreakers }
   try {
-    const response = await fetch(`${API_URL}/users/${userId.value}/answers`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(payload),
-    })
-    if (response.ok) {
-      const matchResponse = await fetch(`${API_URL}/users/${userId.value}/matches`)
-      matches.value = matchResponse.ok ? await matchResponse.json() as Match[] : []
-    } else {
-      populateMockMatches()
-    }
+    const response = await fetch(`${API_URL}/users/${userId.value}/answers`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) })
+    if (!response.ok) throw new Error('answers unavailable')
+    const matchResponse = await fetch(`${API_URL}/users/${userId.value}/matches`)
+    matches.value = matchResponse.ok ? await matchResponse.json() as Match[] : []
   } catch {
-    populateMockMatches()
+    populateDemoMatches()
   }
   page.value = 'dna'
 }
 
-function populateMockMatches() {
-  const mockA: User = { id: 101, nickname: '林澈', age: 25, city: '上海', job: '建筑设计师', purpose: '朋友', dimensions: { explore: 80, deep_talk: 75, initiative: 65, spontaneity: 70, emotion: 60, boundary: 75, planning: 60 }, tags: ['value_freedom', 'pay_alternate'] }
-  const mockB: User = { id: 102, nickname: '安然', age: 27, city: '上海', job: '心理咨询师', purpose: '搭子', dimensions: { explore: 60, deep_talk: 88, initiative: 50, spontaneity: 65, emotion: 82, boundary: 78, planning: 70 }, tags: ['value_explore', 'money_compromise'] }
-  const mockC: User = { id: 103, nickname: '肖野', age: 26, city: '上海', job: '独立摄影师', purpose: '恋爱', dimensions: { explore: 90, deep_talk: 60, initiative: 85, spontaneity: 88, emotion: 55, boundary: 65, planning: 40 }, tags: ['value_explore', 'pay_flexible'] }
-
-  matches.value = [
-    { user: mockA, report: chemistry(dna.value.dimensions, mockA.dimensions, dna.value.tags, mockA.tags) },
-    { user: mockB, report: chemistry(dna.value.dimensions, mockB.dimensions, dna.value.tags, mockB.tags) },
-    { user: mockC, report: chemistry(dna.value.dimensions, mockC.dimensions, dna.value.tags, mockC.tags) },
-  ]
+function populateDemoMatches() {
+  const makeUser = (id: number, nickname: string, age: number, dimensions: Dimensions): User => ({ id, nickname, age, city: '上海', job: '现场参与者', purpose: profile.value.purpose, dimensions, tags: [], animal: assignAnimal(dimensions) })
+  const users = [makeUser(101, '林澈', 25, { ...dna.value.dimensions, planning: 76, boundary: 78 }), makeUser(102, '安然', 27, { ...dna.value.dimensions, deep_talk: 86, emotion: 80 }), makeUser(103, '肖野', 26, { ...dna.value.dimensions, explore: 88, spontaneity: 90 })]
+  matches.value = users.map((user) => ({ user, report: chemistry(dna.value.dimensions, user.dimensions, dna.value.tags, user.tags) }))
 }
 
 function openMatch(id: number) {
@@ -335,145 +322,23 @@ function restart() {
 
       <!-- PAGE 02: Cards Experience -->
       <section v-else-if="page === 'cards'" class="page-content cards-stage">
-        <div class="quiz-nav">
-          <div class="quiz-meta">
-            <span class="badge-cat">{{ currentCard.category }}</span>
-            <span class="quiz-id">ID: {{ currentCard.id }}</span>
-          </div>
-          <div class="quiz-counter">
-            <span class="current-step">{{ cardIndex + 1 }}</span>
-            <span class="slash">/</span>
-            <span class="max-step">{{ demoCards.length }}</span>
-          </div>
-        </div>
-
-        <div class="quiz-progress-track">
-          <div class="quiz-progress-bar" :style="{ width: `${((cardIndex + 1) / demoCards.length) * 100}%` }" />
-        </div>
-
-        <div class="quiz-card-wrapper">
-          <div class="card-ambient-glow" />
-          <article class="interactive-card">
-            <header class="card-head">
-              <span class="card-scenario-tag">SCENARIO DILEMMA</span>
-              <h2 class="card-headline">{{ currentCard.title }}</h2>
-              <p class="card-narrative">{{ currentCard.description }}</p>
-            </header>
-
-            <div class="options-container">
-              <button
-                v-for="option in currentCard.options"
-                :key="option.label"
-                class="option-item"
-                @click="answer(option.label)"
-              >
-                <span class="option-key">{{ option.label }}</span>
-                <span class="option-text">{{ option.text }}</span>
-                <span class="option-select-glow">
-                  <svg viewBox="0 0 20 20" fill="currentColor" class="opt-check"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
-                </span>
-              </button>
-            </div>
-          </article>
-        </div>
-
-        <div class="sub-hint-row">
-          <svg viewBox="0 0 20 20" fill="currentColor" class="hint-icon"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/></svg>
-          <span>没有标准答案，跟随你的第一潜意识选择即可</span>
-        </div>
+        <div class="quiz-nav"><div class="quiz-meta"><span class="badge-cat">{{ currentCard.category }}</span><span class="quiz-id">{{ currentCard.id }}</span></div><div class="quiz-counter"><span class="current-step">{{ cardIndex + 1 }}</span><span class="slash">/</span><span class="max-step">{{ demoCards.length }}</span></div></div>
+        <div class="quiz-progress-track"><div class="quiz-progress-bar" :style="{ width: `${((cardIndex + 1) / demoCards.length) * 100}%` }" /></div>
+        <div class="quiz-card-wrapper"><div class="card-ambient-glow" /><article class="interactive-card"><header class="card-head"><span class="card-scenario-tag">{{ currentCard.multi ? 'CHOOSE THREE' : 'SCENARIO DILEMMA' }}</span><h2 class="card-headline">{{ currentCard.title }}</h2><p class="card-narrative">{{ currentCard.description }}</p></header><div class="options-container"><button v-for="option in currentCard.options" :key="option.label" class="option-item" :class="{ selected: currentCard.multi && answers[currentCard.id]?.split(',').includes(option.label) }" @click="answer(option.label)"><span class="option-key">{{ option.label }}</span><span class="option-text">{{ option.text }}</span><span class="option-select-glow">✓</span></button></div><button v-if="currentCard.multi" class="primary-btn multi-confirm" :disabled="answers[currentCard.id]?.split(',').filter(Boolean).length !== 3" @click="confirmMultiAnswer"><span class="btn-text">确认 3 项红线</span><span>{{ answers[currentCard.id]?.split(',').filter(Boolean).length ?? 0 }}/3</span></button></article></div>
+        <div class="sub-hint-row"><span>跟随第一反应；没有标准答案。</span></div>
       </section>
 
-      <!-- PAGE 03: DNA Reveal -->
       <section v-else-if="page === 'dna'" class="page-content dna-stage">
-        <div class="stage-header text-center">
-          <div class="pill-badge centered">
-            <svg class="icon-sparkle" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0L9.5 6.5L16 8L9.5 9.5L8 16L6.5 9.5L0 8L6.5 6.5L8 0Z"/></svg>
-            <span>SOCIAL DNA DECODED</span>
-          </div>
-          <h1 class="section-title">
-            AI 视野里的你，<em>具有独特的灵性图腾</em>
-          </h1>
-          <p class="section-lead">
-            基于你对 8 组情境冲突的决断，心智模型已完成你的性格聚类
-          </p>
-        </div>
-
-        <!-- Animal Totem Card -->
-        <div class="totem-hero-card">
-          <div class="totem-pattern-grid" />
-          <div class="totem-badge-top">
-            <span class="totem-tag">ARCHETYPE IDENTIFIER</span>
-            <span class="totem-mix-badge">{{ mix[0]?.pct }}% 主导浓度</span>
-          </div>
-
-          <div class="totem-core">
-            <div class="totem-avatar-box">
-              <span class="totem-emoji">{{ animalAvatars[mix[0]?.name]?.symbol ?? '🦦' }}</span>
-              <div class="avatar-ring-pulse" />
-            </div>
-            <div class="totem-details">
-              <div class="totem-title-row">
-                <h3 class="totem-name">{{ mix[0]?.name }}型 · {{ animalAvatars[mix[0]?.name]?.badge ?? '探索者' }}</h3>
-              </div>
-              <p class="totem-desc">{{ animalAvatars[mix[0]?.name]?.desc ?? '好奇灵动，随时把平淡日常变冒险' }}</p>
-              <div class="totem-composition">
-                <div v-for="item in mix" :key="item.name" class="mix-pill">
-                  <span class="mix-label">{{ item.name }}</span>
-                  <span class="mix-value">{{ item.pct }}%</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- 7 Dimensions Matrix -->
-        <div class="dimensions-block">
-          <h4 class="block-title">
-            <svg viewBox="0 0 20 20" fill="currentColor" class="block-icon"><path d="M2 11a1 1 0 011-1h2a1 1 0 011 1v5a1 1 0 01-1 1H3a1 1 0 01-1-1v-5zM8 7a1 1 0 011-1h2a1 1 0 011 1v9a1 1 0 01-1 1H9a1 1 0 01-1-1V7zM14 4a1 1 0 011-1h2a1 1 0 011 1v12a1 1 0 01-1 1h-2a1 1 0 01-1-1V4z"/></svg>
-            7 维性格心智频谱
-          </h4>
-
-          <div class="dimension-bars-grid">
-            <div v-for="item in DIMENSIONS" :key="item.id" class="dim-card">
-              <div class="dim-info">
-                <span class="dim-name">{{ item.label }}</span>
-                <span class="dim-score">{{ dna.dimensions[item.id] }}<small>/100</small></span>
-              </div>
-              <div class="dim-bar-track">
-                <div class="dim-bar-fill" :style="{ width: `${dna.dimensions[item.id]}%` }" />
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <blockquote class="soul-quote">
-          <div class="quote-symbol">“</div>
-          <p>你以为自己慢热，但其实你只是对毫无营养的客套缺乏耐心；真正同频的人，三句话就能激起火花。</p>
-        </blockquote>
-
-        <button class="primary-btn" @click="page = 'matches'">
-          <span class="btn-text">查看为你匹配的高契合度伙伴</span>
-          <div class="btn-arrow-box">
-            <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10.293 3.293a1 1 0 011.414 0l6 6a1 1 0 010 1.414l-6 6a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-4.293-4.293a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
-          </div>
-        </button>
+        <div class="stage-header text-center"><div class="pill-badge centered">SOCIAL DNA DECODED</div><h1 class="section-title">AI 眼中的你，<em>只会是一种动物。</em></h1><p class="section-lead">你的选择已经转化为 12 维性格光谱。</p></div>
+        <div class="totem-hero-card"><div class="totem-pattern-grid" /><div class="totem-badge-top"><span class="totem-tag">YOUR ONE SOCIAL DNA</span><span class="totem-mix-badge">唯一动物塑</span></div><div class="totem-core"><div class="totem-avatar-box"><span class="totem-emoji">{{ animal.emoji }}</span><div class="avatar-ring-pulse" /></div><div class="totem-details"><h3 class="totem-name">{{ animal.name }} · {{ animal.title }}</h3><p class="totem-desc">{{ animal.tagline }}</p></div></div></div>
+        <div class="dimensions-block"><h4 class="block-title">✦ 你的性格光谱 <small>Top 4</small></h4><div class="dimension-bars-grid"><div v-for="item in highlights" :key="item.id" class="dim-card"><div class="dim-info"><span class="dim-name">{{ item.label }}</span><span class="dim-score">{{ item.score }}<small>/100</small></span></div><div class="dim-bar-track"><div class="dim-bar-fill" :style="{ width: `${item.score}%` }" /></div></div></div></div>
+        <blockquote class="soul-quote"><div class="quote-symbol">“</div><p>{{ insight(animal, dna.dimensions) }}</p></blockquote>
+        <details class="radar-details"><summary>查看完整 12 维雷达</summary><div class="dimension-bars-grid"><div v-for="item in DIMENSIONS" :key="item.id" class="dim-card"><div class="dim-info"><span class="dim-name">{{ item.group }} · {{ item.label }}</span><span class="dim-score">{{ dna.dimensions[item.id] }}</span></div><div class="dim-bar-track"><div class="dim-bar-fill" :style="{ width: `${dna.dimensions[item.id]}%` }" /></div></div></div></details>
+        <button class="primary-btn" @click="page = 'matches'"><span class="btn-text">看看 AI 为你找到的人</span><div class="btn-arrow-box">→</div></button>
       </section>
 
-      <!-- PAGE 04: Matches Radar -->
       <section v-else-if="page === 'matches'" class="page-content matches-stage">
-        <div class="stage-header">
-          <div class="pill-badge">
-            <svg class="icon-sparkle" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0L9.5 6.5L16 8L9.5 9.5L8 16L6.5 9.5L0 8L6.5 6.5L8 0Z"/></svg>
-            <span>CHEMISTRY RADAR</span>
-          </div>
-          <h1 class="section-title">
-            值得认识的，<em>从来不需要一百个。</em>
-          </h1>
-          <p class="section-lead">
-            算法从空间与行为矩阵中，为你筛选出 3 位具有强共振与良性互补的真实旅人。
-          </p>
-        </div>
-
+        <div class="stage-header"><div class="pill-badge">CHEMISTRY RADAR</div><h1 class="section-title">值得认识的，<em>从来不需要一百个。</em></h1><p class="section-lead">只为你筛出 3 位可能有火花的人。</p></div>
         <div v-if="matches.length" class="matches-list-grid">
           <button
             v-for="(item, idx) in matches"
@@ -481,11 +346,7 @@ function restart() {
             class="match-card-luxury"
             @click="openMatch(item.user.id)"
           >
-            <div class="match-rank-badge">0{{ idx + 1 }}</div>
-            <div class="match-avatar-pill">
-              <span class="avatar-letter">{{ item.user.nickname.slice(0, 1) }}</span>
-            </div>
-
+            <div class="match-avatar-pill"><span class="avatar-letter">{{ item.user.animal?.emoji ?? item.user.nickname.slice(0, 1) }}</span></div>
             <div class="match-center-info">
               <div class="match-name-row">
                 <h3 class="match-user-name">{{ item.user.nickname }}</h3>
@@ -529,24 +390,8 @@ function restart() {
           <span>返回雷达列表</span>
         </button>
 
-        <div class="detail-header-card">
-          <div class="avatar-large-box">
-            <span class="avatar-large-text">{{ selectedUser.nickname.slice(0, 1) }}</span>
-            <div class="online-indicator" />
-          </div>
-          <div class="detail-user-main">
-            <div class="user-badge-row">
-              <span class="detail-pill">{{ selectedUser.purpose }}</span>
-              <span class="detail-loc">{{ selectedUser.city }}</span>
-            </div>
-            <h2 class="detail-nickname">{{ selectedUser.nickname }}，{{ selectedUser.age }} 岁</h2>
-            <p class="detail-job-text">{{ selectedUser.job }}</p>
-          </div>
-          <div class="detail-chemistry-score">
-            <span class="score-digit">{{ selectedReport.total }}</span>
-            <span class="score-tag">CHEMISTRY INDEX</span>
-          </div>
-        </div>
+        <div class="detail-header-card"><div class="avatar-large-box"><span class="avatar-large-text">{{ selectedUser.animal?.emoji ?? selectedUser.nickname.slice(0, 1) }}</span><div class="online-indicator" /></div><div class="detail-user-main"><div class="user-badge-row"><span class="detail-pill">{{ selectedUser.purpose }}</span><span class="detail-loc">{{ selectedUser.city }}</span></div><h2 class="detail-nickname">{{ selectedUser.nickname }} · {{ selectedUser.animal?.name ?? '等待连接' }}</h2><p class="detail-job-text">{{ selectedUser.job }} · {{ selectedUser.animal?.title ?? '真实参与者' }}</p></div><div class="detail-chemistry-score"><span class="score-digit">{{ selectedReport.total }}</span><span class="score-tag">CHEMISTRY INDEX</span></div></div>
+        <div class="animal-meet-card"><span>{{ animal.emoji }} {{ animal.name }}</span><strong>×</strong><span>{{ selectedUser.animal?.emoji ?? '🧪' }} {{ selectedUser.animal?.name ?? 'TA' }}</span><em>{{ selectedAnimalCombo ?? '相遇组合' }}</em></div>
 
         <div class="chemistry-cards-grid">
           <article class="chem-card chem-common">
@@ -1524,6 +1369,11 @@ button {
   border-radius: var(--radius-full);
   overflow: hidden;
 }
+.radar-details { margin: -12px 0 24px; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 0 20px 18px; background: rgba(14, 27, 48, .55); }
+.radar-details summary { padding: 17px 0; color: var(--accent-gold); cursor: pointer; font-size: 14px; font-weight: 600; }
+.multi-confirm { margin-top: 18px; }
+.option-item.selected { border-color: var(--accent-gold); background: rgba(241, 198, 104, .13); }
+@media (prefers-reduced-motion: reduce) { .avatar-ring-pulse { animation: none; } }
 .dim-bar-fill {
   height: 100%;
   background: linear-gradient(90deg, #315c8b, #f1c668);
@@ -1766,6 +1616,8 @@ button {
   border: 2px solid var(--bg-surface);
   border-radius: 50%;
 }
+.animal-meet-card { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: -8px 0 20px; padding: 13px 16px; color: var(--text-secondary); background: rgba(241, 198, 104, .08); border: 1px solid rgba(241, 198, 104, .24); border-radius: var(--radius-md); }
+.animal-meet-card strong, .animal-meet-card em { color: var(--accent-gold); font-style: normal; }
 .detail-user-main {
   flex: 1;
 }
