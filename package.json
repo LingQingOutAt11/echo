@@ -1,0 +1,9 @@
+{
+  "name": "heikesong",
+  "private": true,
+  "workspaces": ["apps/*"],
+  "scripts": {
+    "api": "bun --cwd apps/api dev",
+    "game": "bun --cwd apps/game dev"
+  }
+}
