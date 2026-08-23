@@ -2,7 +2,7 @@ import { Elysia, t } from 'elysia'
 import { cors } from '@elysia/cors'
 import { SQL } from 'bun'
 import { chemistry, answerMatchScore } from './matching'
-import { getCombo, makeDestinyReading, shuffledDestinyDeck, type ComboKey, type DestinyCardKey, type DestinyQuestionKey } from './destiny'
+import { destinyCard, destinyQuestion, getCombo, makeDestinyReading, shuffledDestinyDeck, type ComboKey, type DestinyCardKey, type DestinyQuestionKey } from './destiny'
 
 // 兜底日志:任何未捕获异常/拒绝都留痕,避免进程静默退出
 process.on('uncaughtException', (err) => console.error('[echo-api] uncaughtException:', err))
@@ -177,11 +177,45 @@ const sessionParticipant = async (session: StoredSession, headers: Record<string
   const userB = Number(session.user_b)
   return userId && (userId === userA || userId === userB) ? userId : undefined
 }
+const parseTarotReading = (source: string) => source.split(/\r?\n\r?\n/).reduce((reading, block) => {
+  if (!/^event:delta(?:\r?\n|$)/m.test(block)) return reading
+  const data = block.match(/^data:(.*)$/m)?.[1]
+  if (!data) return reading
+  try {
+    const content = (JSON.parse(data) as { content?: unknown }).content
+    return typeof content === 'string' ? reading + content : reading
+  } catch {
+    return reading
+  }
+}, '').trim()
+const tarotReadingFor = async (session: StoredSession, questionKey: DestinyQuestionKey, cardKey: DestinyCardKey, combo: { name: string; line: string }) => {
+  const apiKey = process.env.COMPANION_API_KEY
+  if (!apiKey) return undefined
+  const [userA, userB] = await Promise.all([findUser(session.user_a), findUser(session.user_b)])
+  const question = destinyQuestion(questionKey)
+  const card = destinyCard(cardKey)
+  const query = `请解读${userA?.nickname ?? '用户'}与${userB?.nickname ?? '匹配对象'}之间的关系。破冰问题是“${question?.label ?? '我们会如何靠近彼此'}”，抽到的本地关系牌是“${card?.name ?? '回声'}”。双方的匹配类型是“${combo.name}”（${combo.line}）。请重点说明关系中的吸引力、互动模式、潜在挑战和下一步建议，使用温暖、具体、适合直接展示给双方的中文。`
+  try {
+    const response = await fetch(process.env.TAROT_API_URL ?? 'https://hackathon.starrytalk.com/v1/tarot/reading', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'text/event-stream', authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({ query: query.slice(0, 500), gender: process.env.TAROT_GENDER === 'male' ? 'male' : 'female', age: Math.max(1, Math.min(120, Number(userA?.age) || 25)), spread: 'three_card', user_id: String(session.user_a) }),
+      signal: AbortSignal.timeout(45_000),
+    })
+    if (!response.ok) return undefined
+    const reading = parseTarotReading(await response.text())
+    return reading ? { prophecy: reading, quote: `「${card?.quote ?? '关系会在一次次回应中变得清晰。'}」`, opener: question?.opener ?? '现在，问问对方：你觉得我们最像哪一种关系？' } : undefined
+  } catch (error) {
+    console.error('[echo-api] tarot reading unavailable:', error instanceof Error ? error.message : error)
+    return undefined
+  }
+}
 const revealDestiny = async (session: StoredSession, destiny: DestinyState, confirmedBy: number) => {
   if (!destiny.questionKey || !destiny.cardKey) return destiny
   const [userA, userB] = await Promise.all([findUser(session.user_a), findUser(session.user_b)])
   const combo = getCombo(userA?.animal, userB?.animal)
-  return saveDestiny(session, { ...destiny, phase: 'revealed', confirmedCardBy: confirmedBy, comboKey: combo.key, comboName: combo.name, reading: makeDestinyReading(destiny.questionKey, destiny.cardKey, combo.key) })
+  const reading = await tarotReadingFor(session, destiny.questionKey, destiny.cardKey, combo) ?? makeDestinyReading(destiny.questionKey, destiny.cardKey, combo.key)
+  return saveDestiny(session, { ...destiny, phase: 'revealed', confirmedCardBy: confirmedBy, comboKey: combo.key, comboName: combo.name, reading })
 }
 const advanceDestinyTimeout = async (session: StoredSession, destiny: DestinyState) => {
   const now = Date.now()
