@@ -491,19 +491,15 @@ const app = new Elysia()
     if (!authUserId) return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: { 'content-type': 'application/json' } })
     const upstreamKey = process.env.COMPANION_API_KEY
     if (!upstreamKey) return new Response(JSON.stringify({ error: 'companion_unconfigured' }), { status: 503, headers: { 'content-type': 'application/json' } })
-    const user = await findUser(authUserId)
-    const gender = body.gender ?? process.env.COMPANION_GENDER ?? 'female'
-    const age = user ? ageFromBirth(user.birth_datetime) : 25
-    const query = body.system_prompt ? `${body.system_prompt}\n\n用户问题:${body.query}` : body.query
     const upstream = await fetch(process.env.COMPANION_API_URL ?? 'https://hackathon.starrytalk.com/v1/companion/chat', {
       method: 'POST',
       headers: { 'content-type': 'application/json', accept: 'text/event-stream', authorization: `Bearer ${upstreamKey}` },
-      body: JSON.stringify({ spread: body.spread ?? 'one_card', query, gender, age }),
+      body: JSON.stringify({ query: body.query, user_id: String(authUserId), ...(body.system_prompt ? { system_prompt: body.system_prompt } : {}) }),
       signal: AbortSignal.timeout(60_000),
     })
     if (!upstream.ok) return new Response(await upstream.text(), { status: upstream.status, headers: { 'content-type': upstream.headers.get('content-type') ?? 'application/json' } })
     return upstream
-  }, { body: t.Object({ query: t.String({ minLength: 1, maxLength: 2000 }), user_id: t.Optional(t.String({ maxLength: 100 })), system_prompt: t.Optional(t.String({ maxLength: 4000 })), gender: t.Optional(t.Union([t.Literal('male'), t.Literal('female')])), spread: t.Optional(t.String({ minLength: 1, maxLength: 40 })) }) })
+  }, { body: t.Object({ query: t.String({ minLength: 1, maxLength: 500 }), user_id: t.Optional(t.String({ maxLength: 64 })), system_prompt: t.Optional(t.String({ maxLength: 4000 })) }) })
   .get('/nfc-cards/:id', async ({ params, headers, status }) => {
     const userId = await userIdFromAuth(headers)
     if (!userId) return status(401, { error: 'unauthorized' })
