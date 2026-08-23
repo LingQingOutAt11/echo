@@ -83,6 +83,9 @@ CREATE TABLE IF NOT EXISTS nfc_cards (
 
 ALTER TABLE dual_sessions ADD COLUMN IF NOT EXISTS game JSONB;
 ALTER TABLE dual_sessions ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'waiting';
+ALTER TABLE dual_sessions ADD COLUMN IF NOT EXISTS destiny JSONB;
+ALTER TABLE proximity_peers ADD COLUMN IF NOT EXISTS user_id BIGINT REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE proximity_peers ADD COLUMN IF NOT EXISTS dual_session_id TEXT REFERENCES dual_sessions(id) ON DELETE SET NULL;
 ALTER TABLE nfc_cards ADD COLUMN IF NOT EXISTS former_owner_ids BIGINT[] NOT NULL DEFAULT '{}';
 
 CREATE INDEX IF NOT EXISTS nfc_cards_owner_idx ON nfc_cards(owner_id);

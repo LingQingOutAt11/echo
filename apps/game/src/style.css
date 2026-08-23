@@ -2014,3 +2014,29 @@ button {
   margin-top: 16px;
   min-width: 180px;
 }
+
+
+/* PAGE 07.5: Echo deck */
+.destiny-stage { display: grid; gap: 18px; }
+.destiny-heading { border-left: 5px solid var(--rose-deep); padding: 8px 0 8px 16px; }
+.destiny-kicker, .destiny-status { font: 800 11px var(--font-mono); letter-spacing: .1em; color: var(--flora-deep); }
+.destiny-heading h1 { margin: 7px 0; font: 900 clamp(25px, 7vw, 34px) var(--font-pixel), var(--font-mono); color: var(--pixel-border); line-height: 1.25; }
+.destiny-heading h1 em { color: var(--rose-deep); font-style: normal; }
+.destiny-heading p { font-size: 13px; color: var(--text-muted); }
+.destiny-status { line-height: 1.7; letter-spacing: .04em; }
+.destiny-question-grid { display: grid; gap: 10px; }
+.destiny-card { min-height: 118px; padding: 10px 5px; display: grid; align-content: space-between; justify-items: center; background: #152b31; border: 3px solid var(--destiny-accent); color: #fff; box-shadow: 3px 3px 0 var(--destiny-accent); }
+.destiny-card span { font: 800 8px var(--font-mono); opacity: .75; }
+.destiny-card strong { font: 900 31px var(--font-pixel), var(--font-mono); }
+.destiny-card i { font: 24px serif; color: var(--destiny-accent); font-style: normal; }
+.destiny-card:hover, .destiny-card.pending { transform: translateY(-5px); background: #20434a; }
+.destiny-reveal { display: grid; gap: 14px; background: var(--panel-bg); border: 2px solid var(--pixel-border); box-shadow: 5px 5px 0 var(--pixel-border); padding: 16px; }
+.destiny-face { min-height: 175px; display: grid; place-items: center; align-content: center; gap: 7px; color: #fff; background: #152b31; border: 4px solid var(--destiny-accent); box-shadow: inset 0 0 0 5px #152b31, inset 0 0 0 7px var(--destiny-accent); }
+.destiny-face span, .destiny-copy > span { font: 800 10px var(--font-mono); letter-spacing: .1em; color: var(--destiny-accent); }
+.destiny-face strong { font: 900 66px var(--font-pixel), var(--font-mono); }
+.destiny-face i { color: var(--destiny-accent); font: 40px serif; font-style: normal; }
+.destiny-copy { display: grid; gap: 12px; color: var(--text-main); line-height: 1.75; font-size: 14px; }
+.destiny-copy blockquote { padding: 12px; border-left: 4px solid var(--destiny-accent); background: var(--panel-bg-elevated); font-weight: 800; font-size: 16px; }
+.destiny-opener { padding: 12px; background: #eef3ee; border: 1px dashed var(--flora-deep); }
+.destiny-opener b { display: block; color: var(--flora-deep); font: 800 11px var(--font-mono); margin-bottom: 5px; }
+@media (min-width: 680px) { .destiny-question-grid { grid-template-columns: repeat(2, 1fr); } .destiny-reveal { grid-template-columns: 190px 1fr; align-items: stretch; } }

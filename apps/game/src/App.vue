@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { gsap } from 'gsap'
 import QRCode from 'qrcode'
 import { CARDS, DIMENSIONS, type Card, type Dimensions } from './data'
+import { DESTINY_CARDS, DESTINY_QUESTIONS, destinyCard, destinyQuestion, shuffledDestinyDeck, type DestinyCardKey, type DestinyQuestionKey } from './destiny'
 import { animalCombo, assignAnimal, chemistry, dimensionHighlights, insight, scoreAnswers, type Animal } from './engine'
 
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:3000'
@@ -44,7 +45,7 @@ function drawDeck() {
   tarotFlipped.value = false
   rotationAngle.value = 0
 }
-const page = ref<'auth' | 'profile' | 'account' | 'cards' | 'dna' | 'matches' | 'detail' | 'connect' | 'duo' | 'result' | 'chat'>('auth')
+const page = ref<'auth' | 'profile' | 'account' | 'cards' | 'dna' | 'matches' | 'detail' | 'connect' | 'duo' | 'destiny' | 'result' | 'chat'>('auth')
 const profile = ref<{ nickname: string; birth_datetime: string; zodiac: string; mbti: string; city: string; job: string; purpose: '恋爱' | '朋友' | '搭子'; bio: string }>({ nickname: '', birth_datetime: '', zodiac: '', mbti: '', city: '上海', job: '', purpose: '朋友', bio: '' })
 const authMode = ref<'login' | 'register'>('login')
 const authBusy = ref(false)
@@ -75,6 +76,10 @@ const deviceId = ref(localStorage.getItem('ai-chemistry-device-id') ?? safeUUID(
 const round = ref(0)
 const roundChoice = ref('')
 const roundScores = ref<number[]>([])
+type DestinyState = { phase: 'question' | 'draw' | 'card_pending' | 'revealed'; questionKey?: DestinyQuestionKey; selectedBy?: number; confirmedBy?: number; deck: DestinyCardKey[]; cardKey?: DestinyCardKey; selectedCardBy?: number; confirmedCardBy?: number; comboKey?: string; comboName?: string; reading?: { prophecy: string; quote: string; opener: string } }
+const destiny = ref<DestinyState | null>(null)
+const destinyError = ref('')
+let destinyTimer: ReturnType<typeof setInterval> | null = null
 const stage = ref<HTMLElement | null>(null)
 const error = ref('')
 
@@ -144,8 +149,12 @@ const selectedReport = computed(() => selectedMatch.value?.report ?? chemistry(d
 const selectedUser = computed(() => selectedMatch.value?.user ?? { id: 0, nickname: '等待匹配', age: 0, city: '', job: '', purpose: '', dimensions: dna.value.dimensions, tags: [] })
 const selectedAnimalCombo = computed(() => selectedMatch.value?.report.combo ?? animalCombo(animal.value, selectedMatch.value?.user.animal))
 const pageTitles: Record<string, { step: string; label: string }> = {
-  auth: { step: '00', label: '登录 / 注册' }, profile: { step: '01', label: '回声档案' }, account: { step: '00', label: '个人中心' }, cards: { step: '02', label: '心智卡牌' }, dna: { step: '03', label: '社交基因' }, matches: { step: '04', label: '火花雷达' }, detail: { step: '04', label: '化学解析' }, connect: { step: '05', label: '线下接触' }, duo: { step: '06', label: '破冰对决' }, result: { step: '06', label: '回声结论' }, chat: { step: '04', label: '内在小孩对话' },
+  auth: { step: '00', label: '登录 / 注册' }, profile: { step: '01', label: '回声档案' }, account: { step: '00', label: '个人中心' }, cards: { step: '02', label: '心智卡牌' }, dna: { step: '03', label: '社交基因' }, matches: { step: '04', label: '火花雷达' }, detail: { step: '04', label: '化学解析' }, connect: { step: '05', label: '线下接触' }, duo: { step: '06', label: '破冰对决' }, destiny: { step: '06', label: '回声牌' }, result: { step: '06', label: '回声结论' }, chat: { step: '04', label: '内在小孩对话' },
 }
+const destinyQuestionCurrent = computed(() => destinyQuestion(destiny.value?.questionKey))
+const destinyCardCurrent = computed(() => destinyCard(destiny.value?.cardKey))
+const destinySelectedByMe = computed(() => destiny.value?.selectedBy === userId.value)
+const destinyCardSelectedByMe = computed(() => destiny.value?.selectedCardBy === userId.value)
 
 const roundData = [
   { type: 'AI 预测', question: '旅行时，谁会主动做攻略？', options: ['我', 'TA'], tag: 'PREDICTION' },
@@ -365,7 +374,7 @@ async function startProximityPolling() {
       return
     }
     try {
-      const response = await fetch(`${API_URL}/proximity/announce`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ deviceId: deviceId.value }) })
+      const response = await fetch(`${API_URL}/proximity/announce`, { method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders() }, body: JSON.stringify({ deviceId: deviceId.value }) })
       if (!response.ok) { proximityError.value = response.status === 501 ? '当前服务未开启近场配对，请改用扫码加入。' : '近场服务暂时不可用，请稍后重试。'; return }
       const data = await response.json() as { nearby?: boolean; sessionId?: string }
       if (data.nearby && data.sessionId) {
@@ -381,53 +390,81 @@ function chooseRound(option: string) {
   if (roundChoice.value) return
   roundChoice.value = option
 }
-
 function enterDuo(id?: string) {
   sessionId.value = id ?? `mock-session-${Date.now()}`
   page.value = 'duo'
   round.value = 0
   roundChoice.value = ''
   roundScores.value = []
+  startDestinyPolling()
 }
 
 async function connect() {
-  // 先广播本机;未配对时模拟第二台手机碰触,单机即可完成演示
-  const own = await announceProximity()
-  if (own.sessionId) return enterDuo(own.sessionId)
-  const simulated = await announceProximity(`sim-${Math.random().toString(36).slice(2, 10)}`)
-  if (simulated.sessionId) return enterDuo(simulated.sessionId)
-  enterDuo()
+  connectMethod.value = 'proximity'
+  page.value = 'connect'
+  await announceProximity()
+  startProximityPolling()
 }
 
 async function announceProximity(device = deviceId.value): Promise<{ sessionId?: string }> {
   try {
-    const response = await fetch(`${API_URL}/proximity/announce`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ deviceId: device }) })
+    const response = await fetch(`${API_URL}/proximity/announce`, { method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders() }, body: JSON.stringify({ deviceId: device }) })
     if (!response.ok) return {}
     return await response.json() as { sessionId?: string }
   } catch { return {} }
 }
 
+function stopDestinyPolling() {
+  if (destinyTimer) { clearInterval(destinyTimer); destinyTimer = null }
+}
+async function refreshDestiny() {
+  if (!sessionId.value || sessionId.value.startsWith('mock-')) return
+  const response = await apiFetch(`/dual-sessions/${sessionId.value}/destiny`)
+  if (!response.ok) return
+  destiny.value = await response.json() as DestinyState
+  if (page.value === 'duo') page.value = 'destiny'
+}
+function startDestinyPolling() {
+  stopDestinyPolling()
+  void refreshDestiny()
+  destinyTimer = setInterval(() => void refreshDestiny(), 1000)
+}
+async function startDestiny() {
+  if (!sessionId.value || sessionId.value.startsWith('mock-')) { destinyError.value = '需要两台已完成画像的手机完成碰一碰后，才能开启回声牌。'; return }
+  destinyError.value = ''
+  const response = await apiFetch(`/dual-sessions/${sessionId.value}/destiny/start`, { method: 'POST' })
+  if (!response.ok) { destinyError.value = '回声牌会话未准备好，请让双方重新碰一碰。'; return }
+  destiny.value = await response.json() as DestinyState
+  page.value = 'destiny'
+  startDestinyPolling()
+}
+async function destinyAction(action: 'select_question' | 'confirm_question' | 'select_card' | 'confirm_card', key?: string) {
+  if (!sessionId.value) return
+  const response = await apiFetch(`/dual-sessions/${sessionId.value}/destiny/action`, { method: 'POST', body: JSON.stringify({ action, key }) })
+  if (response.ok) destiny.value = await response.json() as DestinyState
+  else destinyError.value = '等待对方操作，或刷新后再试。'
+}
+function continueDuo() {
+  stopDestinyPolling()
+  round.value = 2
+  roundChoice.value = ''
+  page.value = 'duo'
+}
 async function nextRound() {
   if (!roundChoice.value) return
   const optionIndex = currentRound.value.options.findIndex((option) => option.label === roundChoice.value)
-  roundScores.value.push(75 + (optionIndex >= 0 ? optionIndex : 0) * 4) // 依据本回合选择给出差异分 75-91
-  if (round.value < roundData.length - 1) {
-    round.value += 1
+  roundScores.value.push(75 + (optionIndex >= 0 ? optionIndex : 0) * 4)
+  if (round.value === 0) {
+    round.value = 1
     roundChoice.value = ''
     return
   }
+  if (round.value === 1) {
+    await startDestiny()
+    return
+  }
   if (sessionId.value && !sessionId.value.startsWith('mock-')) {
-    try {
-      const patchResponse = await apiFetch(`/dual-sessions/${sessionId.value}`, { method: 'PATCH', body: JSON.stringify({ rounds: roundScores.value, result: chemistryResult.value }) })
-      if (!patchResponse.ok) {
-        // proximity/mock 会话不在 dual-sessions 表:自动创建正式会话落库,让破冰历史可见
-        const created = await apiFetch('/dual-sessions', { method: 'POST', body: JSON.stringify({ userA: userId.value, userB: userId.value }) })
-        if (created.ok) {
-          const session = await created.json() as { id: string }
-          await apiFetch(`/dual-sessions/${session.id}`, { method: 'PATCH', body: JSON.stringify({ rounds: roundScores.value, result: chemistryResult.value }) })
-        }
-      }
-    } catch { /* keep local result visible */ }
+    try { await apiFetch(`/dual-sessions/${sessionId.value}`, { method: 'PATCH', body: JSON.stringify({ rounds: roundScores.value, result: chemistryResult.value }) }) } catch { /* keep local result visible */ }
   }
   await loadHistory()
   page.value = 'result'
@@ -941,11 +978,47 @@ async function sendChat() {
         </article>
 
         <button class="primary-btn" :disabled="!roundChoice" @click="nextRound">
-          <span class="btn-text">{{ round < 2 ? '锁定答案 · 揭晓下一题' : '完成破冰挑战 · 查看化学反应' }}</span>
+          <span class="btn-text">{{ round === 0 ? '锁定答案 · 进入互猜' : round === 1 ? '锁定答案 · 抽一张回声牌' : '完成协作挑战 · 查看化学反应' }}</span>
           <div class="btn-arrow-box">
             <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10.293 3.293a1 1 0 011.414 0l6 6a1 1 0 010 1.414l-6 6a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-4.293-4.293a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
           </div>
         </button>
+      </section>
+      <section v-else-if="page === 'destiny'" class="page-content destiny-stage">
+        <div class="destiny-heading">
+          <span class="destiny-kicker">ECHO DECK · 双人命运牌</span>
+          <h1>把手机放下前，<em>留一句只属于你们的话。</em></h1>
+          <p>一人选择，另一人确认；手机只负责递出话题。</p>
+        </div>
+        <p v-if="destinyError" class="error-banner">{{ destinyError }}</p>
+
+        <template v-if="destiny?.phase === 'question'">
+          <div class="destiny-status">{{ destinyQuestionCurrent ? (destinySelectedByMe ? '已发送给对方确认' : '对方想问这一题，等你说“我也想知道”') : '从五个未来里，选一个你们都想知道的答案' }}</div>
+          <div class="destiny-question-grid">
+            <button v-for="question in DESTINY_QUESTIONS" :key="question.key" class="destiny-question" :class="{ selected: destiny?.questionKey === question.key }" :disabled="Boolean(destiny?.questionKey)" @click="destinyAction('select_question', question.key)">
+              <span>{{ question.temperature }}</span><strong>{{ question.label }}</strong>
+            </button>
+          </div>
+          <button v-if="destinyQuestionCurrent && !destinySelectedByMe" class="primary-btn" @click="destinyAction('confirm_question')"><span class="btn-text">我也想知道</span><span class="btn-arrow-box">→</span></button>
+        </template>
+
+        <template v-else-if="destiny?.phase === 'draw' || destiny?.phase === 'card_pending'">
+          <p class="destiny-status">{{ destiny?.phase === 'card_pending' ? (destinyCardSelectedByMe ? '牌已选好，等对方确认翻开' : '对方选中了这张牌，点击确认一起翻开') : '从十二张回声牌里，凭边缘颜色抽一张写给你们的镜头' }}</p>
+          <div class="destiny-deck">
+            <button v-for="key in destiny?.deck" :key="key" class="destiny-card" :class="{ pending: destiny?.cardKey === key }" :style="{ '--destiny-accent': destinyCard(key)?.accent }" :disabled="destiny?.phase !== 'draw'" @click="destinyAction('select_card', key)">
+              <span>回声牌</span><i>⌁</i><small>{{ destiny?.cardKey === key ? '已选择' : '抽取' }}</small>
+            </button>
+          </div>
+          <button v-if="destiny?.phase === 'card_pending' && !destinyCardSelectedByMe" class="primary-btn" @click="destinyAction('confirm_card')"><span class="btn-text">一起翻开</span><span class="btn-arrow-box">→</span></button>
+        </template>
+
+        <template v-else-if="destiny?.phase === 'revealed' && destinyCardCurrent && destinyQuestionCurrent && destiny.reading">
+          <article class="destiny-reveal" :style="{ '--destiny-accent': destinyCardCurrent.accent }">
+            <div class="destiny-face"><span>{{ destinyCardCurrent.groupLabel }}</span><strong>{{ destinyCardCurrent.name }}</strong><i>{{ destinyCardCurrent.glyph }}</i></div>
+            <div class="destiny-copy"><span>{{ destiny?.comboName }} · {{ destinyQuestionCurrent.label }}</span><p>{{ destiny.reading.prophecy }}</p><blockquote>{{ destiny.reading.quote }}</blockquote><div class="destiny-opener"><b>现在，问问对方：</b>{{ destiny.reading.opener }}</div></div>
+          </article>
+          <div class="destiny-actions"><button class="primary-btn" @click="continueDuo"><span class="btn-text">把话留给彼此，继续协作</span><span class="btn-arrow-box">→</span></button><button class="back-link-btn" @click="continueDuo">跳过，直接聊</button></div>
+        </template>
       </section>
 
       <!-- PAGE 08: Result -->

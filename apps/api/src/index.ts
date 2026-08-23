@@ -91,7 +91,8 @@ const userIdFromAuth = async (headers: Record<string, string | undefined>) => {
     const token = bearerToken(headers)
     if (!token) return undefined
     const [session] = await database`SELECT user_id FROM auth_sessions WHERE token = ${token} AND expires_at > NOW()`
-    return session?.user_id as number | undefined
+    const userId = Number(session?.user_id)
+    return Number.isSafeInteger(userId) ? userId : undefined
   }
   return memoryAccountForToken(headers)?.user_id
 }
