@@ -70,6 +70,7 @@ const sessionId = ref<string | null>(null)
 const connectMethod = ref<'nfc' | 'qr' | 'proximity'>('nfc')
 const qrDataUrl = ref('')
 const proximityId = ref(new URLSearchParams(window.location.search).get('proximity') ?? '')
+const pendingProximity = ref(false)
 const safeUUID = () => (globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`)
 const deviceId = ref(localStorage.getItem('ai-chemistry-device-id') ?? safeUUID())
 const round = ref(0)
@@ -220,6 +221,14 @@ async function submitAuth() {
     localStorage.setItem('ai-chemistry-auth-token', data.token); localStorage.setItem('ai-chemistry-user-id', String(data.user.id))
     await syncAnswered(data.user.id)
     await loadHistory()
+    if (pendingProximity.value) {
+      // 扫码加入的用户登录完成后直接进入配对等待
+      pendingProximity.value = false
+      connectMethod.value = 'proximity'
+      page.value = 'connect'
+      startProximityPolling()
+      return
+    }
     if (data.user.animal) page.value = 'account'
     else { drawDeck(); page.value = 'cards' }
   } catch {
@@ -262,7 +271,14 @@ const chemistryResult = computed(() => ({
 onMounted(() => { preloadTarotBacks(); if (!stage.value) return; const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches; gsap.from('.shell', { autoAlpha: 0, y: reduceMotion ? 0 : 20, duration: reduceMotion ? 0 : 0.8, ease: 'power3.out' }) })
 onMounted(async () => {
   localStorage.setItem('ai-chemistry-device-id', deviceId.value)
-  if (proximityId.value) { connectMethod.value = 'proximity'; page.value = 'connect'; return }
+  if (proximityId.value) {
+    // 扫码加入：未登录先去登录，登录成功后再进入配对等待
+    if (!(await loadAccount())) { pendingProximity.value = true; page.value = 'auth'; return }
+    connectMethod.value = 'proximity'
+    page.value = 'connect'
+    startProximityPolling()
+    return
+  }
   if (await loadAccount()) {
     if (currentUser.value?.animal) page.value = 'account'
     else { drawDeck(); page.value = 'cards' }
@@ -272,7 +288,13 @@ onMounted(async () => {
 })
 watch(page, async () => { await nextTick(); gsap.fromTo('.page-content', { autoAlpha: 0, y: 16 }, { autoAlpha: 1, y: 0, duration: 0.4, ease: 'power2.out' }) })
 watch(page, (current) => { if (current === 'connect') startProximityPolling(); else stopProximityPolling() })
-watch(connectMethod, async (method) => { if (method !== 'qr') return; qrDataUrl.value = await QRCode.toDataURL(`${window.location.origin}/?proximity=join`, { width: 240, margin: 1, color: { dark: '#0b1426', light: '#f4efe3' } }) })
+watch(connectMethod, async (method) => {
+  if (method !== 'qr') return
+  qrDataUrl.value = await QRCode.toDataURL(`${window.location.origin}/?proximity=join`, { width: 240, margin: 1, color: { dark: '#0b1426', light: '#f4efe3' } })
+  // 出码方生成二维码后立即进入配对等待，对方扫码加入即自动开玩
+  proximityError.value = ''
+  startProximityPolling()
+})
 watch(page, (current) => {
   if (current === 'cards') startAutoRotate()
   else stopAutoRotate()
@@ -890,8 +912,8 @@ async function sendChat() {
             <svg viewBox="0 0 20 20" fill="currentColor" class="btn-icon-sm"><path d="M2 5a2 2 0 012-2h7a2 2 0 012 2v4a2 2 0 01-2 2H9l-3 3v-3H4a2 2 0 01-2-2V5z"/><path d="M15 7v2a4 4 0 01-4 4H9.828l-1.766 1.767c.28.149.599.233.938.233h2l3 3v-3h2a2 2 0 002-2V9a2 2 0 00-2-2h-1z"/></svg>
             <span class="btn-text">在线聊天</span>
           </button>
-          <button class="primary-btn" @click="page = 'connect'">
-            <span class="btn-text">发起线下碰一碰破冰</span>
+          <button class="primary-btn" @click="connectMethod = 'qr'; page = 'connect'">
+            <span class="btn-text">生成二维码碰一碰</span>
             <div class="btn-arrow-box">
               <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10.293 3.293a1 1 0 011.414 0l6 6a1 1 0 010 1.414l-6 6a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-4.293-4.293a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
             </div>
@@ -965,13 +987,15 @@ async function sendChat() {
               <img v-if="qrDataUrl" :src="qrDataUrl" class="qr-image" alt="房间二维码" />
               <div v-else class="qr-placeholder-loading">生成安全令牌中...</div>
             </div>
-            <h3 class="nfc-status-title">使用对方微信或相机扫码</h3>
-            <p class="nfc-status-sub">加入实时专属房间，扫码后自动完成碰触配对</p>
+            <h3 class="nfc-status-title">请对方扫码加入</h3>
+            <p class="nfc-status-sub">对方扫码并登录后，将自动进入专属破冰对决，无需其他操作</p>
+            <p v-if="proximityError" class="proximity-error-text">{{ proximityError }}</p>
+            <button class="primary-btn proximity-exit-btn" @click="leaveProximity"><span class="btn-text">退出等待</span></button>
           </template>
         </div>
 
-        <button v-if="connectMethod !== 'proximity'" class="primary-btn" @click="connect">
-          <span class="btn-text">{{ connectMethod === 'nfc' ? '模拟 NFC 碰触连接' : '模拟对方扫码加入' }}</span>
+        <button v-if="connectMethod === 'nfc'" class="primary-btn" @click="connect">
+          <span class="btn-text">NFC 碰触连接</span>
           <div class="btn-arrow-box">
             <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10.293 3.293a1 1 0 011.414 0l6 6a1 1 0 010 1.414l-6 6a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-4.293-4.293a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
           </div>
