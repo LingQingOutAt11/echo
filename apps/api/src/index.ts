@@ -4,6 +4,10 @@ import { SQL } from 'bun'
 import { chemistry } from './matching'
 import { getCombo, makeDestinyReading, shuffledDestinyDeck, type ComboKey, type DestinyCardKey, type DestinyQuestionKey } from './destiny'
 
+// 兜底日志:任何未捕获异常/拒绝都留痕,避免进程静默退出
+process.on('uncaughtException', (err) => console.error('[echo-api] uncaughtException:', err))
+process.on('unhandledRejection', (err) => console.error('[echo-api] unhandledRejection:', err))
+
 type Dimensions = Record<string, number>
 type ChemistryReport = { total: number; complements: string[] }
 type Game = { id: 'constellation' | 'bridge' | 'relay' | 'treasure'; name: string; reason: string; mechanic: string; goal: string }
@@ -150,7 +154,8 @@ const cleanupTimer = setInterval(() => {
   for (const [id, session] of memoryProximitySessions) if (now - new Date(session.createdAt).getTime() > 3_600_000) memoryProximitySessions.delete(id)
   if (database) database`DELETE FROM auth_sessions WHERE expires_at < NOW()`.then(() => undefined).catch(() => undefined)
 }, 600_000)
-cleanupTimer.unref?.()
+// 注意:不要 unref 此 timer —— Bun 在 Windows 上会把 unref 的 timer 误判为空事件循环,
+// 导致进程在无请求时 ~5 秒内退出(实测 Bun 1.3.14 + Bun.serve 复现)。
 
 const app = new Elysia()
   .use(cors())
@@ -302,11 +307,11 @@ const app = new Elysia()
       const [source] = await database`SELECT id, nickname, age, city, job, purpose, bio, dimensions, animal, tags, deal_breakers FROM users WHERE id = ${userId} AND dimensions IS NOT NULL`
       if (!source) return status(404, { error: 'user_not_ready' })
       const candidates = await database`SELECT id, nickname, age, city, job, purpose, bio, dimensions, animal, tags, deal_breakers FROM users WHERE id <> ${source.id} AND purpose = ${source.purpose} AND dimensions IS NOT NULL`
-      return candidates.map((candidate) => ({ user: candidate, report: reportFor(source as StoredUser, candidate as StoredUser) })).sort((a, b) => b.report.total - a.report.total).slice(0, 3)
+      return candidates.map((candidate) => ({ user: candidate, report: reportFor(source as StoredUser, candidate as StoredUser) })).sort((a, b) => b.report.total - a.report.total).slice(0, 20)
     }
     const source = memoryUsers.get(userId)
     if (!source?.dimensions) return status(404, { error: 'user_not_ready' })
-    return [...memoryUsers.values()].filter((candidate) => candidate.id !== source.id && candidate.purpose === source.purpose && candidate.dimensions).map((candidate) => ({ user: userRecord(candidate), report: reportFor(source, candidate) })).sort((a, b) => b.report.total - a.report.total).slice(0, 3)
+    return [...memoryUsers.values()].filter((candidate) => candidate.id !== source.id && candidate.purpose === source.purpose && candidate.dimensions).map((candidate) => ({ user: userRecord(candidate), report: reportFor(source, candidate) })).sort((a, b) => b.report.total - a.report.total).slice(0, 20)
   }, { params: t.Object({ id: t.String({ pattern: '^\\d+$' }) }) })
   .post('/dual-sessions', async ({ body, headers, status }) => {
     const authUserId = await userIdFromAuth(headers)
@@ -420,28 +425,27 @@ const app = new Elysia()
     const now = Date.now()
     const bucket = chatRateBuckets.get(client)
     if (!bucket || bucket.resetAt < now) chatRateBuckets.set(client, { count: 1, resetAt: now + CHAT_RATE_WINDOW_MS })
-    else {
-      bucket.count += 1
-      if (bucket.count > CHAT_RATE_LIMIT) {
-        set.status = 429
-        return { error: 'rate_limited', retry_after_ms: bucket.resetAt - now }
-      }
+    else if (++bucket.count > CHAT_RATE_LIMIT) {
+      set.status = 429
+      return { error: 'rate_limited', retry_after_ms: bucket.resetAt - now }
     }
-    if (chatRateBuckets.size > 10_000) {
-      for (const [key, item] of chatRateBuckets) if (item.resetAt < now) chatRateBuckets.delete(key)
-    }
-    const upstream = await fetch('https://hackathon.starrytalk.com/v1/companion/chat', {
+    const authUserId = await userIdFromAuth(headers)
+    if (!authUserId) return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: { 'content-type': 'application/json' } })
+    const upstreamKey = process.env.COMPANION_API_KEY
+    if (!upstreamKey) return new Response(JSON.stringify({ error: 'companion_unconfigured' }), { status: 503, headers: { 'content-type': 'application/json' } })
+    const user = await findUser(authUserId)
+    const gender = body.gender ?? process.env.COMPANION_GENDER ?? 'female'
+    const age = user ? ageFromBirth(user.birth_datetime) : 25
+    const query = body.system_prompt ? `${body.system_prompt}\n\n用户问题:${body.query}` : body.query
+    const upstream = await fetch(process.env.COMPANION_API_URL ?? 'https://hackathon.starrytalk.com/v1/tarot/reading', {
       method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        accept: 'text/event-stream',
-        authorization: `Bearer ${process.env.COMPANION_API_KEY ?? ''}`,
-      },
-      body: JSON.stringify(body),
+      headers: { 'content-type': 'application/json', accept: 'text/event-stream', authorization: `Bearer ${upstreamKey}` },
+      body: JSON.stringify({ spread: body.spread ?? 'one_card', query, gender, age }),
       signal: AbortSignal.timeout(60_000),
     })
+    if (!upstream.ok) return new Response(await upstream.text(), { status: upstream.status, headers: { 'content-type': upstream.headers.get('content-type') ?? 'application/json' } })
     return upstream
-  }, { body: t.Object({ query: t.String({ minLength: 1, maxLength: 2000 }), user_id: t.Optional(t.String({ maxLength: 100 })), system_prompt: t.Optional(t.String({ maxLength: 4000 })) }) })
+  }, { body: t.Object({ query: t.String({ minLength: 1, maxLength: 2000 }), user_id: t.Optional(t.String({ maxLength: 100 })), system_prompt: t.Optional(t.String({ maxLength: 4000 })), gender: t.Optional(t.Union([t.Literal('male'), t.Literal('female')])), spread: t.Optional(t.String({ minLength: 1, maxLength: 40 })) }) })
   .get('/nfc-cards/:id', async ({ params, headers, status }) => {
     const userId = await userIdFromAuth(headers)
     if (!userId) return status(401, { error: 'unauthorized' })
