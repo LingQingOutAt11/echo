@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { gsap } from 'gsap'
 import QRCode from 'qrcode'
+import LandingView from './LandingView.vue'
 import { CARDS, DIMENSIONS, type Card, type Dimensions } from './data'
 import { ANIMALS, animalCombo, assignAnimal, chemistry, dimensionHighlights, insight, scoreAnswers, type Animal } from './engine'
 
@@ -33,7 +34,7 @@ function drawDeck() {
   tarotFlipped.value = false
   rotationAngle.value = 0
 }
-const page = ref<'auth' | 'profile' | 'account' | 'cards' | 'dna' | 'matches' | 'detail' | 'connect' | 'duo' | 'result' | 'chat'>('auth')
+const page = ref<'landing' | 'auth' | 'profile' | 'account' | 'cards' | 'dna' | 'matches' | 'detail' | 'connect' | 'duo' | 'result' | 'chat'>('landing')
 const profile = ref<{ nickname: string; birth_datetime: string; zodiac: string; mbti: string; city: string; job: string; purpose: '恋爱' | '朋友' | '搭子'; bio: string }>({ nickname: '', birth_datetime: '', zodiac: '', mbti: '', city: '上海', job: '', purpose: '朋友', bio: '' })
 const authMode = ref<'login' | 'register'>('login')
 const authBusy = ref(false)
@@ -64,7 +65,7 @@ const error = ref('')
 const dna = computed(() => scoreAnswers(sessionCards.value, answers.value))
 const animal = computed(() => assignAnimal(dna.value.dimensions))
 const highlights = computed(() => dimensionHighlights(dna.value.dimensions))
-const answeredCount = computed(() => QUIZ_DRAW - deck.value.length)
+const answeredCount = computed(() => sessionCards.value.filter((card) => (answers.value[card.id]?.split(',').filter(Boolean).length ?? 0) > 0).length)
 const currentCard = computed(() => deck.value[cardIndex.value])
 const progress = computed(() => `${answeredCount.value}/${QUIZ_DRAW}`)
 const rotationAngle = ref(0)
@@ -123,7 +124,7 @@ const selectedReport = computed(() => selectedMatch.value?.report ?? chemistry(d
 const selectedUser = computed(() => selectedMatch.value?.user ?? { id: 0, nickname: '等待匹配', age: 0, city: '', job: '', purpose: '', dimensions: dna.value.dimensions, tags: [] })
 const selectedAnimalCombo = computed(() => selectedMatch.value?.report.combo ?? animalCombo(animal.value, selectedMatch.value?.user.animal))
 const pageTitles: Record<string, { step: string; label: string }> = {
-  auth: { step: '00', label: '登录 / 注册' }, profile: { step: '01', label: '回声档案' }, account: { step: '00', label: '个人中心' }, cards: { step: '02', label: '心智卡牌' }, dna: { step: '03', label: '社交基因' }, matches: { step: '04', label: '火花雷达' }, detail: { step: '04', label: '化学解析' }, connect: { step: '05', label: '线下接触' }, duo: { step: '06', label: '破冰对决' }, result: { step: '06', label: '回声结论' }, chat: { step: '04', label: '内在小孩对话' },
+  landing: { step: '00', label: '回声网络' }, auth: { step: '00', label: '登录 / 注册' }, profile: { step: '01', label: '回声档案' }, account: { step: '00', label: '个人中心' }, cards: { step: '02', label: '心智卡牌' }, dna: { step: '03', label: '社交基因' }, matches: { step: '04', label: '火花雷达' }, detail: { step: '04', label: '化学解析' }, connect: { step: '05', label: '线下接触' }, duo: { step: '06', label: '破冰对决' }, result: { step: '06', label: '回声结论' }, chat: { step: '04', label: '内在小孩对话' },
 }
 
 const roundData = [
@@ -189,7 +190,7 @@ onMounted(async () => {
     else { drawDeck(); page.value = 'cards' }
     return
   }
-  page.value = 'auth'
+  page.value = 'landing'
 })
 watch(page, async () => { await nextTick(); gsap.fromTo('.page-content', { autoAlpha: 0, y: 16 }, { autoAlpha: 1, y: 0, duration: 0.4, ease: 'power2.out' }) })
 watch(page, (current) => { if (current === 'connect') startProximityPolling(); else stopProximityPolling() })
@@ -230,16 +231,19 @@ async function confirmMultiAnswer() {
 }
 
 async function settleCard() {
-  // 答过的题移出本轮牌组并持久化，保证不会再被抽到
+  // 牌组保持 8 张常驻,答过的牌标记为已答但留在轮盘上
   const answeredId = currentCard.value.id
   tarotFlipped.value = false
   answeredCardIds.value = [...new Set([...answeredCardIds.value, answeredId])]
   localStorage.setItem('ai-chemistry-answered-cards', JSON.stringify(answeredCardIds.value))
-  const remaining = deck.value.filter((card) => card.id !== answeredId)
-  deck.value = remaining
-  if (!remaining.length) { await submitAnswers(); return }
-  cardIndex.value %= remaining.length
-  const stepDeg = 360 / remaining.length
+  if (answeredCount.value >= QUIZ_DRAW) { await submitAnswers(); return }
+  // 旋转到下一张未答的卡
+  const un = (from: number) => deck.value.findIndex((card, index) => index >= from && !(answers.value[card.id]?.split(',').filter(Boolean).length))
+  let next = un(cardIndex.value + 1)
+  if (next === -1) next = un(0)
+  if (next === -1) next = cardIndex.value
+  cardIndex.value = next
+  const stepDeg = 360 / deck.value.length
   rotationAngle.value = (360 - (cardIndex.value * stepDeg)) % 360
 }
 
@@ -471,6 +475,9 @@ async function sendChat() {
 
 <template>
   <main ref="stage" class="stage">
+    <!-- Landing: 3D avatar network -->
+    <LandingView v-if="page === 'landing'" @enter="page = 'auth'" />
+
     <!-- Ambient Background Lighting -->
     <div class="glow-orb orb-top" />
     <div class="glow-orb orb-bottom" />
@@ -478,7 +485,7 @@ async function sendChat() {
 
     <div class="shell">
       <!-- High-end Minimal Topbar -->
-      <header class="topbar">
+      <header v-if="page !== 'landing'" class="topbar">
         <div class="brand-badge">
           <svg class="brand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
             <circle cx="12" cy="12" r="9" stroke-width="1.75" />
@@ -593,7 +600,7 @@ async function sendChat() {
       <section v-else-if="page === 'cards'" class="page-content cards-stage tarot-stage">
         <div class="quiz-nav"><div class="quiz-meta"><span class="badge-cat">TAROT DRAW</span><span class="quiz-id">题库 {{ POOL_SIZE }} · {{ progress }} 已答</span></div><div class="quiz-counter"><span class="current-step">{{ answeredCount }}</span><span class="slash">/</span><span class="max-step">{{ QUIZ_DRAW }}</span></div></div>
         <div class="quiz-progress-track"><div class="quiz-progress-bar" :style="{ width: `${(answeredCount / QUIZ_DRAW) * 100}%` }" /></div>
-        <div class="tarot-intro"><span class="tarot-kicker">THE SOCIAL ARCANA</span><h1 class="tarot-title">抽一张牌，<em>看见你的第一反应。</em></h1><p>从 {{ POOL_SIZE }} 道题库中随机抽出 {{ QUIZ_DRAW }} 张。答过的牌不会再出现。</p></div>
+        <div class="tarot-intro"><span class="tarot-kicker">THE SOCIAL ARCANA</span><h1 class="tarot-title">抽一张牌，<em>看见你的第一反应。</em></h1><p>从 {{ POOL_SIZE }} 道题库中随机抽出 {{ QUIZ_DRAW }} 张。8 张全部作答后，自动进入社交基因解码。</p></div>
         <div class="tarot-carousel" aria-label="本轮八张塔罗情境牌" @touchstart="handleTarotTouchStart" @touchend="handleTarotTouchEnd">
           <button v-for="(card, index) in deck" :key="card.id" class="tarot-card" :class="{ flipped: tarotFlipped && index === cardIndex, answered: answers[card.id] }" :style="tarotTransform(index)" :aria-label="index === cardIndex && tarotFlipped ? `回答${card.title}` : '抽取这张塔罗牌'" @click="focusTarot(index)">
             <span class="tarot-card-inner"><span class="tarot-face tarot-back"><img :src="tarotBack(card)" :alt="`${card.category}塔罗牌背`" /></span><span class="tarot-face tarot-front"><span class="tarot-card-index">{{ String(index + 1).padStart(2, '0') }} · {{ card.category }}</span><strong>{{ card.title }}</strong><small>{{ card.description }}</small><span class="tarot-flip-hint">{{ card.multi ? '选择 3 项' : '选择你的答案' }}</span></span></span>
