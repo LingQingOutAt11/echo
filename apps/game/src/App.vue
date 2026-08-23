@@ -497,6 +497,7 @@ const chatDraft = ref('')
 const chatStreaming = ref(false)
 const chatError = ref('')
 const chatQueued = ref('')
+const chatAnimal = computed(() => currentUser.value?.animal ?? animal.value)
 let chatAbort: AbortController | null = null
 
 const chatStorageKey = () => `ai-chemistry-chat-${userId.value ?? 'guest'}`
@@ -511,8 +512,7 @@ const chatPersona = () => {
   return `【用户前置档案】(每次对话都必须基于这些信息,不可编造)
 ${profileText}
 
-【角色】你就是用户自己的内在小孩,是 TA 心里那个真实、柔软、还没长大的自己。你就是 TA,不是别人。
-你的化身是 ${animal.value.emoji}${animal.value.name}——${animal.value.title},「${animal.value.tagline}」。
+  你的化身是 ${chatAnimal.value.emoji}${chatAnimal.value.name}——${chatAnimal.value.title},「${chatAnimal.value.tagline}」。
 请始终以「用户的内在小孩」的第一人称视角和 TA 对话:
 - 你的第一句话永远是:「我也就是你呀。」——让 TA 一开始就明白,你就是 TA 自己;
 - 称呼 TA 用名字或「你」;语气稚气、真诚、直接,可以撒娇、犯傻、有小脾气,但不越界;
@@ -546,9 +546,8 @@ async function sendChat() {
   chatAbort?.abort()
   chatAbort = new AbortController()
   try {
-    const response = await fetch(`${API_URL}/companion/chat`, {
+    const response = await apiFetch('/companion/chat', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ query, user_id: String(userId.value ?? 'guest'), system_prompt: chatPersona() }),
       signal: chatAbort.signal,
     })
@@ -744,7 +743,7 @@ async function sendChat() {
       </section>
 
       <section v-else-if="page === 'matches'" class="page-content matches-stage">
-        <div class="stage-header"><div class="pill-badge">CHEMISTRY RADAR</div><h1 class="section-title">值得认识的，<em>从来不需要一百个。</em></h1><p class="section-lead">{{ demoMatches ? '当前为演示匹配，邀请真实同伴完成测算后自动替换。' : '只为你筛出 3 位可能有火花的人。' }}</p></div>
+        <div class="stage-header"><div class="pill-badge">CHEMISTRY RADAR</div><h1 class="section-title">值得认识的，<em>从来不需要一百个。</em></h1><p class="section-lead">{{ demoMatches ? '当前为演示匹配，邀请真实同伴完成测算后自动替换。' : '每天为你筛出最多 20 位可能有火花的人。' }}</p></div>
         <div v-if="matches.length" class="matches-list-grid">
           <button
             v-for="(item, idx) in matches"
@@ -1083,10 +1082,10 @@ async function sendChat() {
       <!-- PAGE 09: Inner Child Chat -->
       <section v-else-if="page === 'chat'" class="page-content chat-stage">
         <div class="chat-header">
-          <img :src="animal.image" class="chat-avatar" :alt="animal.name" />
+          <img :src="chatAnimal.image" class="chat-avatar" :alt="chatAnimal.name" />
           <div class="chat-header-copy">
-            <h1 class="chat-title">{{ animal.emoji }} {{ animal.name }} · 你的内在小孩</h1>
-            <p class="chat-subtitle">{{ animal.tagline }} —— TA 就是你心里那个还没长大的自己。</p>
+            <h1 class="chat-title">{{ chatAnimal.emoji }} {{ chatAnimal.name }} · 你的内在小孩</h1>
+            <p class="chat-subtitle">{{ chatAnimal.tagline }} —— TA 就是你心里那个还没长大的自己。</p>
           </div>
         </div>
 
@@ -1095,7 +1094,7 @@ async function sendChat() {
             <p>TA 正等着你开口。<br />聊聊今天的心情、最近的烦恼，或者随便什么都行。</p>
           </div>
           <div v-for="(message, index) in chatMessages" :key="index" class="chat-msg" :class="message.role">
-            <img v-if="message.role === 'bot'" :src="animal.image" class="chat-bubble-avatar" :alt="animal.name" />
+            <img v-if="message.role === 'bot'" :src="chatAnimal.image" class="chat-bubble-avatar" :alt="chatAnimal.name" />
             <div class="chat-bubble">
               <span class="chat-text">{{ message.text }}</span>
               <details v-if="message.thinking" class="chat-thinking"><summary>🤔 思考过程</summary><span>{{ message.thinking }}</span></details>
