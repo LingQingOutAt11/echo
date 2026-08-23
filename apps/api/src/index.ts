@@ -6,7 +6,7 @@ import { chemistry } from './matching'
 type Dimensions = Record<string, number>
 type ChemistryReport = { total: number; complements: string[] }
 type Game = { id: 'constellation' | 'bridge' | 'relay' | 'treasure'; name: string; reason: string; mechanic: string; goal: string }
-type StoredUser = { id: number; username?: string; nickname: string; age: number; birth_datetime?: string; zodiac?: string; mbti?: string; city: string; job: string; purpose: string; bio: string; dimensions?: Dimensions; animal?: { id?: string; emoji?: string; name?: string; title?: string; tagline?: string; image?: string }; tags: string[]; deal_breakers: string[] }
+type StoredUser = { id: number; username?: string; nickname: string; age: number; birth_datetime?: string; zodiac?: string; mbti?: string; city: string; job: string; purpose: string; bio: string; dimensions?: Dimensions; animal?: { id?: string; emoji?: string; name?: string; title?: string; tagline?: string; image?: string }; tags: string[]; deal_breakers: string[]; answers?: { cardId: string; optionLabel: string }[] }
 type StoredSession = { id: string; user_a: number; user_b: number; game: Game; rounds: unknown[]; result: unknown; status: string; created_at?: string }
 type StoredCard = { id: string; title: string; content: string; owner_id: number | null; claimed_at: string | null; transferred_at: string | null; former_owner_ids: number[] }
 type StoredAccount = { id: number; user_id: number; username: string; password_hash: string }
@@ -189,8 +189,19 @@ const app = new Elysia()
     user.animal = body.animal
     user.tags = body.tags
     user.deal_breakers = body.dealBreakers
+    user.answers = body.answers
     return { ok: true, userId }
   }, { params: t.Object({ id: t.String({ pattern: '^\\d+$' }) }), body: t.Object({ answers: t.Array(t.Object({ cardId: t.String(), optionLabel: t.String() })), dimensions: dimensionsSchema, animal: t.Unknown(), tags: t.Array(t.String()), dealBreakers: t.Array(t.String()) }) })
+  .get('/users/:id/answers', async ({ params, headers, status }) => {
+    const userId = Number(params.id)
+    if (!(await requireOwner(headers, userId))) return status(401, { error: 'unauthorized' })
+    if (database) {
+      const rows = await database`SELECT DISTINCT card_id FROM card_answers WHERE user_id = ${userId}`
+      return { answeredCardIds: rows.map((row) => row.card_id) }
+    }
+    const user = memoryUsers.get(userId)
+    return { answeredCardIds: [...new Set((user?.answers ?? []).map((item) => item.cardId))] }
+  }, { params: t.Object({ id: t.String({ pattern: '^\\d+$' }) }) })
   .get('/users/:id/history', async ({ params, headers, status }) => {
     const userId = Number(params.id)
     if (!(await requireOwner(headers, userId))) return status(401, { error: 'unauthorized' })

@@ -2,7 +2,6 @@
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { gsap } from 'gsap'
 import QRCode from 'qrcode'
-import LandingView from './LandingView.vue'
 import { CARDS, DIMENSIONS, type Card, type Dimensions } from './data'
 import { ANIMALS, animalCombo, assignAnimal, chemistry, dimensionHighlights, insight, scoreAnswers, type Animal } from './engine'
 
@@ -21,12 +20,16 @@ const tarotBack = (card: Card) => {
   const hash = [...card.id].reduce((sum, character) => sum * 31 + character.charCodeAt(0), 0)
   return `/tarot-cards/${TAROT_BACK_IDS[Math.abs(hash) % TAROT_BACK_IDS.length]}.webp`
 }
-const answeredCardIds = ref<string[]>(JSON.parse(localStorage.getItem('ai-chemistry-answered-cards') ?? '[]'))
+const preloadTarotBacks = () => TAROT_BACK_IDS.forEach((id) => {
+  const image = new Image()
+  image.src = `/tarot-cards/${id}.webp`
+})
+const answeredCardIds = ref<string[]>([])
 const deck = ref<Card[]>([])
 const sessionCards = ref<Card[]>([])
 function drawDeck() {
   let pool = CARDS.filter((card) => !answeredCardIds.value.includes(card.id))
-  if (pool.length < QUIZ_DRAW) { answeredCardIds.value = []; localStorage.removeItem('ai-chemistry-answered-cards'); pool = CARDS }
+  if (pool.length < QUIZ_DRAW) { answeredCardIds.value = []; localStorage.removeItem(`ai-chemistry-answered-cards-${userId.value}`); pool = CARDS }
   const shuffled = [...pool].sort(() => Math.random() - 0.5)
   sessionCards.value = deck.value = shuffled.slice(0, QUIZ_DRAW)
   answers.value = {}
@@ -34,7 +37,7 @@ function drawDeck() {
   tarotFlipped.value = false
   rotationAngle.value = 0
 }
-const page = ref<'landing' | 'auth' | 'profile' | 'account' | 'cards' | 'dna' | 'matches' | 'detail' | 'connect' | 'duo' | 'result' | 'chat'>('landing')
+const page = ref<'auth' | 'profile' | 'account' | 'cards' | 'dna' | 'matches' | 'detail' | 'connect' | 'duo' | 'result' | 'chat'>('auth')
 const profile = ref<{ nickname: string; birth_datetime: string; zodiac: string; mbti: string; city: string; job: string; purpose: '恋爱' | '朋友' | '搭子'; bio: string }>({ nickname: '', birth_datetime: '', zodiac: '', mbti: '', city: '上海', job: '', purpose: '朋友', bio: '' })
 const authMode = ref<'login' | 'register'>('login')
 const authBusy = ref(false)
@@ -124,7 +127,7 @@ const selectedReport = computed(() => selectedMatch.value?.report ?? chemistry(d
 const selectedUser = computed(() => selectedMatch.value?.user ?? { id: 0, nickname: '等待匹配', age: 0, city: '', job: '', purpose: '', dimensions: dna.value.dimensions, tags: [] })
 const selectedAnimalCombo = computed(() => selectedMatch.value?.report.combo ?? animalCombo(animal.value, selectedMatch.value?.user.animal))
 const pageTitles: Record<string, { step: string; label: string }> = {
-  landing: { step: '00', label: '回声网络' }, auth: { step: '00', label: '登录 / 注册' }, profile: { step: '01', label: '回声档案' }, account: { step: '00', label: '个人中心' }, cards: { step: '02', label: '心智卡牌' }, dna: { step: '03', label: '社交基因' }, matches: { step: '04', label: '火花雷达' }, detail: { step: '04', label: '化学解析' }, connect: { step: '05', label: '线下接触' }, duo: { step: '06', label: '破冰对决' }, result: { step: '06', label: '回声结论' }, chat: { step: '04', label: '内在小孩对话' },
+  auth: { step: '00', label: '登录 / 注册' }, profile: { step: '01', label: '回声档案' }, account: { step: '00', label: '个人中心' }, cards: { step: '02', label: '心智卡牌' }, dna: { step: '03', label: '社交基因' }, matches: { step: '04', label: '火花雷达' }, detail: { step: '04', label: '化学解析' }, connect: { step: '05', label: '线下接触' }, duo: { step: '06', label: '破冰对决' }, result: { step: '06', label: '回声结论' }, chat: { step: '04', label: '内在小孩对话' },
 }
 
 const roundData = [
@@ -141,6 +144,13 @@ const openPicker = (event: Event) => {
 const apiFetch = (path: string, options: RequestInit = {}) => fetch(`${API_URL}${path}`, { ...options, headers: { 'content-type': 'application/json', ...authHeaders(), ...(options.headers ?? {}) } })
 const selectedMessages = computed(() => selectedMatch.value ? history.value.messages.filter((message) => message.sender_id === selectedMatch.value!.user.id || message.receiver_id === selectedMatch.value!.user.id) : [])
 
+async function syncAnswered(userId: number) {
+  const response = await apiFetch(`/users/${userId}/answers`)
+  if (!response.ok) return
+  const data = await response.json() as { answeredCardIds?: string[] }
+  answeredCardIds.value = data.answeredCardIds ?? []
+  localStorage.setItem(`ai-chemistry-answered-cards-${userId}`, JSON.stringify(answeredCardIds.value))
+}
 async function loadHistory() {
   if (!userId.value || !authToken.value) return
   const response = await apiFetch(`/users/${userId.value}/history`)
@@ -153,6 +163,7 @@ async function loadAccount() {
   const data = await response.json() as { user: User }
   currentUser.value = data.user; userId.value = data.user.id
   profile.value = { nickname: data.user.nickname, birth_datetime: data.user.birth_datetime ?? '', zodiac: data.user.zodiac ?? '', mbti: data.user.mbti ?? '', city: data.user.city, job: data.user.job, purpose: data.user.purpose as '恋爱' | '朋友' | '搭子', bio: data.user.bio }
+  await syncAnswered(data.user.id)
   await loadHistory()
   return true
 }
@@ -169,6 +180,7 @@ async function submitAuth() {
   }
   authToken.value = data.token; currentUser.value = data.user; userId.value = data.user.id
   localStorage.setItem('ai-chemistry-auth-token', data.token); localStorage.setItem('ai-chemistry-user-id', String(data.user.id))
+  await syncAnswered(data.user.id)
   await loadHistory()
   if (data.user.animal) page.value = 'account'
   else { drawDeck(); page.value = 'cards' }
@@ -181,7 +193,7 @@ const chemistryResult = computed(() => ({
   complement: Math.min(100, 72 + selectedReport.value.complements.length * 9),
 }))
 
-onMounted(() => { if (!stage.value) return; const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches; gsap.from('.shell', { autoAlpha: 0, y: reduceMotion ? 0 : 20, duration: reduceMotion ? 0 : 0.8, ease: 'power3.out' }) })
+onMounted(() => { preloadTarotBacks(); if (!stage.value) return; const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches; gsap.from('.shell', { autoAlpha: 0, y: reduceMotion ? 0 : 20, duration: reduceMotion ? 0 : 0.8, ease: 'power3.out' }) })
 onMounted(async () => {
   localStorage.setItem('ai-chemistry-device-id', deviceId.value)
   if (proximityId.value) { connectMethod.value = 'proximity'; page.value = 'connect'; return }
@@ -190,7 +202,7 @@ onMounted(async () => {
     else { drawDeck(); page.value = 'cards' }
     return
   }
-  page.value = 'landing'
+  page.value = 'auth'
 })
 watch(page, async () => { await nextTick(); gsap.fromTo('.page-content', { autoAlpha: 0, y: 16 }, { autoAlpha: 1, y: 0, duration: 0.4, ease: 'power2.out' }) })
 watch(page, (current) => { if (current === 'connect') startProximityPolling(); else stopProximityPolling() })
@@ -235,7 +247,7 @@ async function settleCard() {
   const answeredId = currentCard.value.id
   tarotFlipped.value = false
   answeredCardIds.value = [...new Set([...answeredCardIds.value, answeredId])]
-  localStorage.setItem('ai-chemistry-answered-cards', JSON.stringify(answeredCardIds.value))
+  localStorage.setItem(`ai-chemistry-answered-cards-${userId.value}`, JSON.stringify(answeredCardIds.value))
   if (answeredCount.value >= QUIZ_DRAW) { await submitAnswers(); return }
   // 旋转到下一张未答的卡
   const un = (from: number) => deck.value.findIndex((card, index) => index >= from && !(answers.value[card.id]?.split(',').filter(Boolean).length))
@@ -475,9 +487,6 @@ async function sendChat() {
 
 <template>
   <main ref="stage" class="stage">
-    <!-- Landing: 3D avatar network -->
-    <LandingView v-if="page === 'landing'" @enter="page = 'auth'" />
-
     <!-- Ambient Background Lighting -->
     <div class="glow-orb orb-top" />
     <div class="glow-orb orb-bottom" />
@@ -485,7 +494,7 @@ async function sendChat() {
 
     <div class="shell">
       <!-- High-end Minimal Topbar -->
-      <header v-if="page !== 'landing'" class="topbar">
+      <header class="topbar">
         <div class="brand-badge">
           <svg class="brand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
             <circle cx="12" cy="12" r="9" stroke-width="1.75" />
