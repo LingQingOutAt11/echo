@@ -1,6 +1,25 @@
 # Echo standalone stack (独立于 xiaokai / yixue,不触碰其它服务)
-# 用法: docker compose -f deploy/docker-compose.yml -p echo up -d --build
+# 用法(在仓库根目录):
+#   POSTGRES_PASSWORD=<强口令> COMPANION_API_KEY=<星元key> \
+#     docker compose -f deploy/docker-compose.yml -p echo up -d --build
+# 两个环境变量必填,缺失时 compose 直接报错,不再使用任何默认值。
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: echo-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: echo
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: echo
+    volumes:
+      - echo-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U echo -d echo"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   api:
     build:
       context: ..
@@ -12,9 +31,14 @@ services:
       - "3000:3000"
     environment:
       PORT: "3000"
-      COMPANION_API_KEY: ${COMPANION_API_KEY:-sk-hack-13bfdc6a38a7d4719a980ae09039fef6}
+      DATABASE_URL: postgres://echo:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/echo
+      COMPANION_API_KEY: ${COMPANION_API_KEY:?COMPANION_API_KEY is required}
+    command: ["sh", "-c", "bun db/migrate.ts && bun src/index.ts"]
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3000/health || exit 1"]
+      test: ["CMD-SHELL", "bun -e \"fetch('http://127.0.0.1:3000/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))\""]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -31,3 +55,6 @@ services:
       - "8090:80"
     depends_on:
       - api
+
+volumes:
+  echo-postgres-data:

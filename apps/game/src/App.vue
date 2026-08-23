@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { gsap } from 'gsap'
 import QRCode from 'qrcode'
 import { CARDS, DIMENSIONS, type Card, type Dimensions } from './data'
-import { ANIMALS, animalCombo, assignAnimal, chemistry, dimensionHighlights, insight, scoreAnswers, type Animal } from './engine'
+import { animalCombo, assignAnimal, chemistry, dimensionHighlights, insight, scoreAnswers, type Animal } from './engine'
 
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:3000'
 const ZODIACS = ['白羊座', '金牛座', '双子座', '巨蟹座', '狮子座', '处女座', '天秤座', '天蝎座', '射手座', '摩羯座', '水瓶座', '双鱼座']
@@ -27,11 +27,18 @@ const preloadTarotBacks = () => TAROT_BACK_IDS.forEach((id) => {
 const answeredCardIds = ref<string[]>([])
 const deck = ref<Card[]>([])
 const sessionCards = ref<Card[]>([])
+const answeredStorageKey = (id: number | null) => `ai-chemistry-answered-cards-${id}`
+const persistAnsweredCards = () => localStorage.setItem(answeredStorageKey(userId.value), JSON.stringify(answeredCardIds.value))
 function drawDeck() {
   let pool = CARDS.filter((card) => !answeredCardIds.value.includes(card.id))
-  if (pool.length < QUIZ_DRAW) { answeredCardIds.value = []; localStorage.removeItem(`ai-chemistry-answered-cards-${userId.value}`); pool = CARDS }
+  if (pool.length < QUIZ_DRAW) {
+    answeredCardIds.value = []
+    localStorage.removeItem(answeredStorageKey(userId.value))
+    pool = CARDS
+  }
   const shuffled = [...pool].sort(() => Math.random() - 0.5)
-  sessionCards.value = deck.value = shuffled.slice(0, QUIZ_DRAW)
+  deck.value = shuffled.slice(0, QUIZ_DRAW)
+  sessionCards.value = []
   answers.value = {}
   cardIndex.value = 0
   tarotFlipped.value = false
@@ -49,7 +56,13 @@ const messageDraft = ref('')
 const answers = ref<Record<string, string>>({})
 const cardIndex = ref(0)
 const tarotFlipped = ref(false)
-const tarotTouchStartX = ref<number | null>(null)
+let tarotTouchStartX = 0
+function handleTarotTouchStart(event: TouchEvent) { tarotTouchStartX = event.touches[0]?.clientX ?? 0 }
+function handleTarotTouchEnd(event: TouchEvent) {
+  const endX = event.changedTouches[0]?.clientX ?? tarotTouchStartX
+  const delta = endX - tarotTouchStartX
+  if (Math.abs(delta) > 40) swipeTarot(delta < 0 ? 1 : -1)
+}
 const userId = ref<number | null>(Number(localStorage.getItem('ai-chemistry-user-id')) || null)
 const matches = ref<Match[]>([])
 const selectedMatchId = ref<number | null>(null)
@@ -68,7 +81,10 @@ const error = ref('')
 const dna = computed(() => scoreAnswers(sessionCards.value, answers.value))
 const animal = computed(() => assignAnimal(dna.value.dimensions))
 const highlights = computed(() => dimensionHighlights(dna.value.dimensions))
-const answeredCount = computed(() => sessionCards.value.filter((card) => (answers.value[card.id]?.split(',').filter(Boolean).length ?? 0) > 0).length)
+const answeredCount = computed(() => sessionCards.value.filter((card) => {
+  const picked = answers.value[card.id]?.split(',').filter(Boolean).length ?? 0
+  return card.multi ? picked >= 3 : picked > 0
+}).length)
 const currentCard = computed(() => deck.value[cardIndex.value])
 const progress = computed(() => `${answeredCount.value}/${QUIZ_DRAW}`)
 const rotationAngle = ref(0)
@@ -123,7 +139,8 @@ const tarotTransform = (index: number) => {
   }
 }
 const selectedMatch = computed(() => matches.value.find((item) => item.user.id === selectedMatchId.value) ?? null)
-const selectedReport = computed(() => selectedMatch.value?.report ?? chemistry(dna.value.dimensions, dna.value.dimensions, dna.value.tags, dna.value.tags))
+const demoMatches = ref(false)
+const selectedReport = computed(() => selectedMatch.value?.report ?? chemistry(dna.value.dimensions, dna.value.dimensions, dna.value.tags, dna.value.tags, dna.value.dealBreakers, dna.value.dealBreakers, animal.value, animal.value))
 const selectedUser = computed(() => selectedMatch.value?.user ?? { id: 0, nickname: '等待匹配', age: 0, city: '', job: '', purpose: '', dimensions: dna.value.dimensions, tags: [] })
 const selectedAnimalCombo = computed(() => selectedMatch.value?.report.combo ?? animalCombo(animal.value, selectedMatch.value?.user.animal))
 const pageTitles: Record<string, { step: string; label: string }> = {
@@ -145,11 +162,12 @@ const apiFetch = (path: string, options: RequestInit = {}) => fetch(`${API_URL}$
 const selectedMessages = computed(() => selectedMatch.value ? history.value.messages.filter((message) => message.sender_id === selectedMatch.value!.user.id || message.receiver_id === selectedMatch.value!.user.id) : [])
 
 async function syncAnswered(userId: number) {
+  const local = JSON.parse(localStorage.getItem(answeredStorageKey(userId)) ?? '[]') as string[]
   const response = await apiFetch(`/users/${userId}/answers`)
-  if (!response.ok) return
+  if (!response.ok) { answeredCardIds.value = local; return }
   const data = await response.json() as { answeredCardIds?: string[] }
-  answeredCardIds.value = data.answeredCardIds ?? []
-  localStorage.setItem(`ai-chemistry-answered-cards-${userId}`, JSON.stringify(answeredCardIds.value))
+  answeredCardIds.value = [...new Set([...local, ...(data.answeredCardIds ?? [])])]
+  persistAnsweredCards()
 }
 async function loadHistory() {
   if (!userId.value || !authToken.value) return
@@ -158,32 +176,41 @@ async function loadHistory() {
 }
 async function loadAccount() {
   if (!authToken.value) return false
-  const response = await apiFetch('/auth/me')
-  if (!response.ok) { authToken.value = ''; localStorage.removeItem('ai-chemistry-auth-token'); return false }
-  const data = await response.json() as { user: User }
-  currentUser.value = data.user; userId.value = data.user.id
-  profile.value = { nickname: data.user.nickname, birth_datetime: data.user.birth_datetime ?? '', zodiac: data.user.zodiac ?? '', mbti: data.user.mbti ?? '', city: data.user.city, job: data.user.job, purpose: data.user.purpose as '恋爱' | '朋友' | '搭子', bio: data.user.bio }
-  await syncAnswered(data.user.id)
-  await loadHistory()
-  return true
+  try {
+    const response = await apiFetch('/auth/me')
+    if (!response.ok) { authToken.value = ''; localStorage.removeItem('ai-chemistry-auth-token'); return false }
+    const data = await response.json() as { user: User }
+    currentUser.value = data.user; userId.value = data.user.id
+    profile.value = { nickname: data.user.nickname, birth_datetime: data.user.birth_datetime ?? '', zodiac: data.user.zodiac ?? '', mbti: data.user.mbti ?? '', city: data.user.city, job: data.user.job, purpose: data.user.purpose as '恋爱' | '朋友' | '搭子', bio: data.user.bio }
+    await syncAnswered(data.user.id)
+    await loadHistory()
+    return true
+  } catch {
+    error.value = '网络连接异常，请检查服务是否可用后重试。'
+    return false
+  }
 }
 async function submitAuth() {
   error.value = ''
   const body = authMode.value === 'register' ? { ...authForm.value } : { username: authForm.value.username, password: authForm.value.password }
-  const response = await apiFetch(`/auth/${authMode.value}`, { method: 'POST', body: JSON.stringify(body) })
-  const data = await response.json() as { token?: string; user?: User; error?: string }
-  if (!response.ok || !data.token || !data.user) {
-    error.value = authMode.value === 'register'
-      ? data.error === 'username_taken' ? '用户名已存在' : data.error === 'VALIDATION' ? '注册信息有误：用户名 2-40 位（不含空格），密码至少 6 位' : '注册失败，请稍后重试'
-      : data.error === 'invalid_credentials' ? '用户名或密码不正确' : '登录失败，请稍后重试'
-    return
+  try {
+    const response = await apiFetch(`/auth/${authMode.value}`, { method: 'POST', body: JSON.stringify(body) })
+    const data = await response.json() as { token?: string; user?: User; error?: string }
+    if (!response.ok || !data.token || !data.user) {
+      error.value = authMode.value === 'register'
+        ? data.error === 'username_taken' ? '用户名已存在' : data.error === 'VALIDATION' ? '注册信息有误：用户名 2-40 位（不含空格），密码至少 6 位' : '注册失败，请稍后重试'
+        : data.error === 'invalid_credentials' ? '用户名或密码不正确' : '登录失败，请稍后重试'
+      return
+    }
+    authToken.value = data.token; currentUser.value = data.user; userId.value = data.user.id
+    localStorage.setItem('ai-chemistry-auth-token', data.token); localStorage.setItem('ai-chemistry-user-id', String(data.user.id))
+    await syncAnswered(data.user.id)
+    await loadHistory()
+    if (data.user.animal) page.value = 'account'
+    else { drawDeck(); page.value = 'cards' }
+  } catch {
+    error.value = '网络连接异常，请确认服务已启动后重试。'
   }
-  authToken.value = data.token; currentUser.value = data.user; userId.value = data.user.id
-  localStorage.setItem('ai-chemistry-auth-token', data.token); localStorage.setItem('ai-chemistry-user-id', String(data.user.id))
-  await syncAnswered(data.user.id)
-  await loadHistory()
-  if (data.user.animal) page.value = 'account'
-  else { drawDeck(); page.value = 'cards' }
 }
 async function logout() { await apiFetch('/auth/logout', { method: 'POST' }).catch(() => undefined); authToken.value = ''; currentUser.value = null; userId.value = null; localStorage.removeItem('ai-chemistry-auth-token'); localStorage.removeItem('ai-chemistry-user-id'); page.value = 'auth' }
 async function sendMessage() { if (!selectedMatch.value || !messageDraft.value.trim()) return; const response = await apiFetch('/messages', { method: 'POST', body: JSON.stringify({ receiverId: selectedMatch.value.user.id, content: messageDraft.value.trim() }) }); if (response.ok) { messageDraft.value = ''; await loadHistory() } }
@@ -243,39 +270,52 @@ async function confirmMultiAnswer() {
 }
 
 async function settleCard() {
-  // 牌组保持 8 张常驻,答过的牌标记为已答但留在轮盘上
-  const answeredId = currentCard.value.id
+  const answeredCard = currentCard.value
+  if (!answeredCard) return
   tarotFlipped.value = false
-  answeredCardIds.value = [...new Set([...answeredCardIds.value, answeredId])]
-  localStorage.setItem(`ai-chemistry-answered-cards-${userId.value}`, JSON.stringify(answeredCardIds.value))
+  sessionCards.value = [...sessionCards.value, answeredCard]
+  answeredCardIds.value = [...new Set([...answeredCardIds.value, answeredCard.id])]
+  persistAnsweredCards()
   if (answeredCount.value >= QUIZ_DRAW) { await submitAnswers(); return }
-  // 旋转到下一张未答的卡
-  const un = (from: number) => deck.value.findIndex((card, index) => index >= from && !(answers.value[card.id]?.split(',').filter(Boolean).length))
-  let next = un(cardIndex.value + 1)
-  if (next === -1) next = un(0)
-  if (next === -1) next = cardIndex.value
-  cardIndex.value = next
-  const stepDeg = 360 / deck.value.length
-  rotationAngle.value = (360 - (cardIndex.value * stepDeg)) % 360
+
+  const activeIds = new Set(deck.value.map((card) => card.id))
+  activeIds.delete(answeredCard.id)
+  let candidates = CARDS.filter((card) => !answeredCardIds.value.includes(card.id) && !activeIds.has(card.id))
+  if (!candidates.length) {
+    const sessionIds = new Set(sessionCards.value.map((card) => card.id))
+    answeredCardIds.value = [...sessionIds]
+    persistAnsweredCards()
+    candidates = CARDS.filter((card) => !sessionIds.has(card.id) && !activeIds.has(card.id))
+  }
+  const replacement = candidates[Math.floor(Math.random() * candidates.length)]
+  if (!replacement) return
+  deck.value.splice(cardIndex.value, 1, replacement)
+  rotationAngle.value = (rotationAngle.value + 120) % 360
 }
 
 async function submitAnswers() {
   if (!userId.value || !authToken.value) { page.value = 'auth'; return }
+  error.value = ''
   const payload = { answers: Object.entries(answers.value).flatMap(([cardId, labels]) => labels.split(',').filter(Boolean).map((optionLabel) => ({ cardId, optionLabel }))), dimensions: dna.value.dimensions, animal: animal.value, tags: dna.value.tags, dealBreakers: dna.value.dealBreakers }
-  const response = await apiFetch(`/users/${userId.value}/answers`, { method: 'POST', body: JSON.stringify(payload) })
-  if (!response.ok) { error.value = '测评保存失败，请重新登录后重试。'; return }
-  currentUser.value = { ...(currentUser.value as User), dimensions: dna.value.dimensions, animal: animal.value, tags: dna.value.tags, deal_breakers: dna.value.dealBreakers }
-  const matchResponse = await apiFetch(`/users/${userId.value}/matches`)
-  matches.value = matchResponse.ok ? await matchResponse.json() as Match[] : []
-  await loadHistory()
-  if (!matches.value.length) populateDemoMatches()
-  page.value = 'dna'
+  try {
+    const response = await apiFetch(`/users/${userId.value}/answers`, { method: 'POST', body: JSON.stringify(payload) })
+    if (!response.ok) { error.value = '测评保存失败，请重新登录后重试。'; return }
+    currentUser.value = { ...(currentUser.value as User), dimensions: dna.value.dimensions, animal: animal.value, tags: dna.value.tags, deal_breakers: dna.value.dealBreakers }
+    const matchResponse = await apiFetch(`/users/${userId.value}/matches`)
+    matches.value = matchResponse.ok ? await matchResponse.json() as Match[] : []
+    await loadHistory()
+    if (!matches.value.length) populateDemoMatches()
+    page.value = 'dna'
+  } catch {
+    error.value = '网络连接异常，测评未能保存，请稍后重试。'
+  }
 }
 
 function populateDemoMatches() {
-  const makeUser = (id: number, nickname: string, age: number, dimensions: Dimensions): User => ({ id, nickname, age, city: '上海', job: '现场参与者', purpose: profile.value.purpose, dimensions, tags: [], animal: assignAnimal(dimensions) })
+  demoMatches.value = true
+  const makeUser = (id: number, nickname: string, age: number, dimensions: Dimensions): User => ({ id, nickname, age, city: '上海', job: '现场参与者', purpose: profile.value.purpose, dimensions, tags: [], deal_breakers: [], animal: assignAnimal(dimensions) })
   const users = [makeUser(101, '林澈', 25, { ...dna.value.dimensions, planning: 76, boundary: 78 }), makeUser(102, '安然', 27, { ...dna.value.dimensions, deep_talk: 86, emotion: 80 }), makeUser(103, '肖野', 26, { ...dna.value.dimensions, explore: 88, spontaneity: 90 })]
-  matches.value = users.map((user) => ({ user, report: chemistry(dna.value.dimensions, user.dimensions, dna.value.tags, user.tags) }))
+  matches.value = users.map((user) => ({ user, report: chemistry(dna.value.dimensions, user.dimensions, dna.value.tags, user.tags, dna.value.dealBreakers, user.deal_breakers ?? [], animal.value, user.animal) }))
 }
 
 function openMatch(id: number) {
@@ -285,23 +325,42 @@ function openMatch(id: number) {
 
 async function openMatches() {
   if (!userId.value || !authToken.value) return
-  const response = await apiFetch(`/users/${userId.value}/matches`)
-  matches.value = response.ok ? await response.json() as Match[] : []
-  if (!matches.value.length) populateDemoMatches()
-  page.value = 'matches'
+  error.value = ''
+  try {
+    const response = await apiFetch(`/users/${userId.value}/matches`)
+    matches.value = response.ok ? await response.json() as Match[] : []
+    if (!matches.value.length) populateDemoMatches()
+    page.value = 'matches'
+  } catch {
+    error.value = '网络连接异常，无法加载匹配结果。'
+  }
 }
 
 let proximityTimer: ReturnType<typeof setInterval> | null = null
+let proximityDeadline = 0
+const proximityError = ref('')
 function stopProximityPolling() {
   if (proximityTimer) { clearInterval(proximityTimer); proximityTimer = null }
+}
+function leaveProximity() {
+  stopProximityPolling()
+  proximityError.value = ''
+  page.value = authToken.value ? 'matches' : 'auth'
 }
 async function startProximityPolling() {
   stopProximityPolling()
   if (!deviceId.value) return
+  proximityDeadline = Date.now() + 90_000
+  proximityError.value = ''
   proximityTimer = setInterval(async () => {
+    if (Date.now() > proximityDeadline) {
+      stopProximityPolling()
+      proximityError.value = '等待超时，未检测到附近的设备。请确认对方也已打开本页面后重试。'
+      return
+    }
     try {
       const response = await fetch(`${API_URL}/proximity/announce`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ deviceId: deviceId.value }) })
-      if (!response.ok) return
+      if (!response.ok) { proximityError.value = response.status === 501 ? '当前服务未开启近场配对，请改用扫码加入。' : '近场服务暂时不可用，请稍后重试。'; return }
       const data = await response.json() as { nearby?: boolean; sessionId?: string }
       if (data.nearby && data.sessionId) {
         sessionId.value = data.sessionId
@@ -344,7 +403,8 @@ async function announceProximity(device = deviceId.value): Promise<{ sessionId?:
 
 async function nextRound() {
   if (!roundChoice.value) return
-  roundScores.value.push(85) // 单机演示:每完成一轮计 85 分默契值
+  const optionIndex = currentRound.value.options.findIndex((option) => option.label === roundChoice.value)
+  roundScores.value.push(75 + (optionIndex >= 0 ? optionIndex : 0) * 4) // 依据本回合选择给出差异分 75-91
   if (round.value < roundData.length - 1) {
     round.value += 1
     roundChoice.value = ''
@@ -427,7 +487,7 @@ async function sendChat() {
   chatError.value = ''
   chatQueued.value = ''
   chatMessages.value.push({ role: 'user', text: query })
-  const reply: ChatMessage = { role: 'bot', text: '' }
+  const reply = reactive<ChatMessage>({ role: 'bot', text: '' })
   chatMessages.value.push(reply)
   chatStreaming.value = true
   chatAbort?.abort()
@@ -447,7 +507,7 @@ async function sendChat() {
     while (true) {
       const { done, value } = await reader.read()
       if (done) break
-      buffer += decoder.decode(value, { stream: true })
+      buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n')
       let sep: number
       while ((sep = buffer.indexOf('\n\n')) >= 0) {
         const frame = buffer.slice(0, sep)
@@ -607,6 +667,7 @@ async function sendChat() {
 
       <!-- PAGE 02: Cards Experience -->
       <section v-else-if="page === 'cards'" class="page-content cards-stage tarot-stage">
+        <div v-if="error" class="error-banner">{{ error }}</div>
         <div class="quiz-nav"><div class="quiz-meta"><span class="badge-cat">TAROT DRAW</span><span class="quiz-id">题库 {{ POOL_SIZE }} · {{ progress }} 已答</span></div><div class="quiz-counter"><span class="current-step">{{ answeredCount }}</span><span class="slash">/</span><span class="max-step">{{ QUIZ_DRAW }}</span></div></div>
         <div class="quiz-progress-track"><div class="quiz-progress-bar" :style="{ width: `${(answeredCount / QUIZ_DRAW) * 100}%` }" /></div>
         <div class="tarot-intro"><span class="tarot-kicker">THE SOCIAL ARCANA</span><h1 class="tarot-title">抽一张牌，<em>看见你的第一反应。</em></h1><p>从 {{ POOL_SIZE }} 道题库中随机抽出 {{ QUIZ_DRAW }} 张。8 张全部作答后，自动进入社交基因解码。</p></div>
@@ -619,6 +680,7 @@ async function sendChat() {
       </section>
 
       <section v-else-if="page === 'dna'" class="page-content dna-stage">
+        <div v-if="error" class="error-banner">{{ error }}</div>
         <div class="stage-header text-center"><div class="pill-badge centered">SOCIAL DNA DECODED</div><h1 class="section-title">AI 眼中的你，<em>只会是一种动物。</em></h1><p class="section-lead">你的选择已经转化为 12 维性格光谱。</p></div>
         <div class="totem-hero-card"><div class="totem-pattern-grid" /><div class="totem-badge-top"><span class="totem-tag">YOUR ONE SOCIAL DNA</span><span class="totem-mix-badge">唯一动物塑</span></div><div class="totem-core"><img class="totem-animal-card" :src="animal.image" :alt="animal.name" /><div class="totem-details"><h3 class="totem-name">{{ animal.name }} · {{ animal.title }}</h3><p class="totem-desc">{{ animal.tagline }}</p></div></div></div>
         <div class="dimensions-block"><h4 class="block-title">✦ 你的性格光谱 <small>Top 4</small></h4><div class="dimension-bars-grid"><div v-for="item in highlights" :key="item.id" class="dim-card"><div class="dim-info"><span class="dim-name">{{ item.label }}</span><span class="dim-score">{{ item.score }}<small>/100</small></span></div><div class="dim-bar-track"><div class="dim-bar-fill" :style="{ width: `${item.score}%` }" /></div></div></div></div>
@@ -629,7 +691,7 @@ async function sendChat() {
       </section>
 
       <section v-else-if="page === 'matches'" class="page-content matches-stage">
-        <div class="stage-header"><div class="pill-badge">CHEMISTRY RADAR</div><h1 class="section-title">值得认识的，<em>从来不需要一百个。</em></h1><p class="section-lead">只为你筛出 3 位可能有火花的人。</p></div>
+        <div class="stage-header"><div class="pill-badge">CHEMISTRY RADAR</div><h1 class="section-title">值得认识的，<em>从来不需要一百个。</em></h1><p class="section-lead">{{ demoMatches ? '当前为演示匹配，邀请真实同伴完成测算后自动替换。' : '只为你筛出 3 位可能有火花的人。' }}</p></div>
         <div v-if="matches.length" class="matches-list-grid">
           <button
             v-for="(item, idx) in matches"
@@ -802,6 +864,8 @@ async function sendChat() {
             </div>
             <h3 class="nfc-status-title">已加入房间，等待对方设备连接…</h3>
             <p class="nfc-status-sub">两台设备同频后，将自动进入专属破冰对决</p>
+            <p v-if="proximityError" class="proximity-error-text">{{ proximityError }}</p>
+            <button class="primary-btn proximity-exit-btn" @click="leaveProximity"><span class="btn-text">退出等待</span></button>
           </template>
 
           <template v-else>

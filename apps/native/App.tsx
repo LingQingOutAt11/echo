@@ -4,7 +4,6 @@ import NfcManager, { Ndef, NfcTech } from 'react-native-nfc-manager'
 import BleManager from 'react-native-ble-manager'
 import Peripheral, { Permission, Property } from 'react-native-multi-ble-peripheral'
 import { Buffer } from 'buffer'
-import * as Notifications from 'expo-notifications'
 import { StatusBar } from 'expo-status-bar'
 import { useEffect, useRef, useState } from 'react'
 import { Alert, Linking, PermissionsAndroid, Platform, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
@@ -73,12 +72,16 @@ function App() {
   async function startProximity() {
     if (proximityStarted.current) return
     proximityStarted.current = true
-    if (Platform.OS === 'android' && Number(Platform.Version) >= 31) {
-      await PermissionsAndroid.requestMultiple([PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN, PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT, PermissionsAndroid.PERMISSIONS.BLUETOOTH_ADVERTISE])
+    if (Platform.OS === 'android') {
+      if (Number(Platform.Version) >= 31) {
+        await PermissionsAndroid.requestMultiple([PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN, PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT, PermissionsAndroid.PERMISSIONS.BLUETOOTH_ADVERTISE])
+      } else {
+        await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION)
+      }
     }
     try {
       await BleManager.start()
-      await BleManager.scan({ serviceUUIDs: [PROXIMITY_SERVICE], seconds: 0, allowDuplicates: false })
+      await BleManager.scan({ serviceUUIDs: [PROXIMITY_SERVICE], seconds: 15, allowDuplicates: false })
       let scanSubscription: ReturnType<typeof BleManager.onDiscoverPeripheral> | undefined
       scanSubscription = BleManager.onDiscoverPeripheral(async (device) => {
         if (device.name !== 'ECHO_NEAR') return
@@ -104,9 +107,12 @@ function App() {
     scale.value = withRepeat(withTiming(1.06, { duration: 2400 }), -1, true)
     ringScale.value = withRepeat(withTiming(1.22, { duration: 2400 }), -1, false)
     NfcManager.start().catch(() => undefined)
-    Notifications.requestPermissionsAsync().catch(() => undefined)
     startProximity().catch(() => undefined)
     const connection = new WebSocket(API_URL.replace(/^http/, 'ws') + '/ws')
+    connection.onopen = () => {
+      // 显式加入聊天房间,避免收不到任何广播(服务端不再自动订阅)
+      connection.send(JSON.stringify({ type: 'join', sessionId: 'lobby' }))
+    }
     connection.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data) as { type?: string; content?: string }

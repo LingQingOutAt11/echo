@@ -11,14 +11,14 @@
     "preview": {
       "distribution": "internal",
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://api.example.com",
-        "EXPO_PUBLIC_GAME_URL": "https://game.example.com"
+        "EXPO_PUBLIC_API_URL": "http://81.70.185.14:3000",
+        "EXPO_PUBLIC_GAME_URL": "http://81.70.185.14:8090"
       }
     },
     "production": {
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://api.example.com",
-        "EXPO_PUBLIC_GAME_URL": "https://game.example.com"
+        "EXPO_PUBLIC_API_URL": "http://81.70.185.14:3000",
+        "EXPO_PUBLIC_GAME_URL": "http://81.70.185.14:8090"
       }
     }
   }

@@ -1,7 +1,7 @@
 FROM oven/bun:1
 WORKDIR /app
 COPY . .
-RUN bun install --frozen-lockfile 2>/dev/null || bun install
+RUN bun install --cwd apps/api --production 2>/dev/null || bun install --cwd apps/api
 WORKDIR /app/apps/api
 ENV PORT=3000
 EXPOSE 3000

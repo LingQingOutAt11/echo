@@ -20,7 +20,8 @@
       "infoPlist": {
         "NFCReaderUsageDescription": "用 NFC 标签进入对应的线下破冰活动。",
         "NSBluetoothAlwaysUsageDescription": "用于发现附近正在等待破冰的手机。",
-        "NSBluetoothPeripheralUsageDescription": "用于让附近的手机发现破冰入口。"
+        "NSBluetoothPeripheralUsageDescription": "用于让附近的手机发现破冰入口。",
+        "UIBackgroundModes": ["bluetooth-central", "bluetooth-peripheral"]
       }
     },
     "android": {

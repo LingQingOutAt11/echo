@@ -41,9 +41,6 @@ CREATE TABLE IF NOT EXISTS card_answers (
   PRIMARY KEY (user_id, card_id, option_label)
 );
 
-ALTER TABLE card_answers DROP CONSTRAINT IF EXISTS card_answers_pkey;
-ALTER TABLE card_answers ADD CONSTRAINT card_answers_pkey PRIMARY KEY (user_id, card_id, option_label);
-
 CREATE TABLE IF NOT EXISTS messages (
   id BIGSERIAL PRIMARY KEY,
   sender_id BIGINT NOT NULL REFERENCES users(id),

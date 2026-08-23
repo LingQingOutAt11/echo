@@ -22,7 +22,16 @@ type ProximityPeer = { deviceId: string; lastSeen: number; sessionId?: string }
 type ProximitySession = { id: string; devices: string[]; game: Game; createdAt: string }
 const memoryProximityPeers = new Map<string, ProximityPeer>()
 const memoryProximitySessions = new Map<string, ProximitySession>()
+const memoryCards = new Map<string, StoredCard>()
+const seedMemoryCards = () => {
+  if (memoryCards.size) return
+  memoryCards.set('starter-01', { id: 'starter-01', title: '星光隐藏卡', content: '找到一颗只属于你们的星星。', owner_id: null, claimed_at: null, transferred_at: null, former_owner_ids: [] })
+}
+seedMemoryCards()
 const proximityGame: Game = { id: 'treasure', name: '隐藏卡寻宝', reason: '两台手机已经靠近，直接开始一场短合作。', mechanic: '双方在画布上协作找到三个宝箱。', goal: '找到 3 个宝箱后完成破冰。' }
+const chatRateBuckets = new Map<string, { count: number; resetAt: number }>()
+const CHAT_RATE_LIMIT = 12
+const CHAT_RATE_WINDOW_MS = 60_000
 let nextUserId = 1
 let nextAccountId = 1
 let nextMessageId = 1
@@ -86,6 +95,15 @@ const userIdFromAuth = async (headers: Record<string, string | undefined>) => {
   return memoryAccountForToken(headers)?.user_id
 }
 const requireOwner = async (headers: Record<string, string | undefined>, requestedId: number) => (await userIdFromAuth(headers)) === requestedId
+
+const cleanupTimer = setInterval(() => {
+  const now = Date.now()
+  for (const [token, session] of memoryTokens) if (session.expiresAt < now) memoryTokens.delete(token)
+  for (const [deviceId, peer] of memoryProximityPeers) if (now - peer.lastSeen > 60_000) memoryProximityPeers.delete(deviceId)
+  for (const [id, session] of memoryProximitySessions) if (now - new Date(session.createdAt).getTime() > 3_600_000) memoryProximitySessions.delete(id)
+  if (database) database`DELETE FROM auth_sessions WHERE expires_at < NOW()`.then(() => undefined).catch(() => undefined)
+}, 600_000)
+cleanupTimer.unref?.()
 
 const app = new Elysia()
   .use(cors())
@@ -289,8 +307,15 @@ const app = new Elysia()
     return memorySession
   }, { params: t.Object({ id: t.String({ minLength: 1, maxLength: 100 }) }), body: t.Object({ rounds: t.Array(t.Unknown()), result: t.Unknown() }) })
   .post('/proximity/announce', async ({ body, status }) => {
-    if (database) return status(501, { error: 'proximity_memory_mode_only' })
     const now = Date.now()
+    if (database) {
+      await database`DELETE FROM proximity_peers WHERE last_seen < ${new Date(now - 15_000)}`
+      const [existing] = await database`SELECT device_id, session_id FROM proximity_peers WHERE device_id <> ${body.deviceId} AND last_seen > ${new Date(now - 15_000)} LIMIT 1`
+      const sessionId = existing?.session_id ?? crypto.randomUUID()
+      if (!existing) await database`INSERT INTO proximity_sessions (id, game) VALUES (${sessionId}, ${JSON.stringify(proximityGame)}::jsonb) ON CONFLICT (id) DO NOTHING`
+      await database`INSERT INTO proximity_peers (device_id, session_id, last_seen) VALUES (${body.deviceId}, ${sessionId}, ${new Date(now)}) ON CONFLICT (device_id) DO UPDATE SET session_id = EXCLUDED.session_id, last_seen = EXCLUDED.last_seen`
+      return { nearby: Boolean(existing), sessionId, game: proximityGame }
+    }
     const existing = [...memoryProximityPeers.values()].find((peer) => peer.deviceId !== body.deviceId && now - peer.lastSeen < 15_000)
     const peer: ProximityPeer = { deviceId: body.deviceId, lastSeen: now, sessionId: existing?.sessionId }
     if (existing) {
@@ -302,8 +327,29 @@ const app = new Elysia()
     memoryProximityPeers.set(body.deviceId, peer)
     return { nearby: Boolean(existing), sessionId: peer.sessionId, game: peer.sessionId ? proximityGame : undefined }
   }, { body: t.Object({ deviceId: t.String({ minLength: 8, maxLength: 100 }) }) })
-  .get('/proximity/:id', ({ params, status }) => memoryProximitySessions.get(params.id) ?? status(404, { error: 'proximity_session_not_found' }), { params: t.Object({ id: t.String({ minLength: 1, maxLength: 100 }) }) })
-  .post('/companion/chat', async ({ body }) => {
+  .get('/proximity/:id', async ({ params, status }) => {
+    if (database) {
+      const [session] = await database`SELECT id, game, created_at FROM proximity_sessions WHERE id = ${params.id}`
+      if (!session) return status(404, { error: 'proximity_session_not_found' })
+      return { ...session, game: typeof session.game === 'string' ? JSON.parse(session.game) : session.game }
+    }
+    return memoryProximitySessions.get(params.id) ?? status(404, { error: 'proximity_session_not_found' })
+  }, { params: t.Object({ id: t.String({ minLength: 1, maxLength: 100 }) }) })
+  .post('/companion/chat', async ({ body, headers, set }) => {
+    const client = (headers['x-forwarded-for'] ?? headers['cf-connecting-ip'] ?? 'anonymous').toString().split(',')[0].trim()
+    const now = Date.now()
+    const bucket = chatRateBuckets.get(client)
+    if (!bucket || bucket.resetAt < now) chatRateBuckets.set(client, { count: 1, resetAt: now + CHAT_RATE_WINDOW_MS })
+    else {
+      bucket.count += 1
+      if (bucket.count > CHAT_RATE_LIMIT) {
+        set.status = 429
+        return { error: 'rate_limited', retry_after_ms: bucket.resetAt - now }
+      }
+    }
+    if (chatRateBuckets.size > 10_000) {
+      for (const [key, item] of chatRateBuckets) if (item.resetAt < now) chatRateBuckets.delete(key)
+    }
     const upstream = await fetch('https://hackathon.starrytalk.com/v1/companion/chat', {
       method: 'POST',
       headers: {
@@ -312,6 +358,7 @@ const app = new Elysia()
         authorization: `Bearer ${process.env.COMPANION_API_KEY ?? ''}`,
       },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(60_000),
     })
     return upstream
   }, { body: t.Object({ query: t.String({ minLength: 1, maxLength: 2000 }), user_id: t.Optional(t.String({ maxLength: 100 })), system_prompt: t.Optional(t.String({ maxLength: 4000 })) }) })
@@ -334,9 +381,8 @@ const app = new Elysia()
     const card = memoryCards.get(params.id)
     if (!card) return status(404, { error: 'card_not_found' })
     if (card.owner_id !== null || card.former_owner_ids.includes(body.userId)) return status(409, { error: 'card_already_owned' })
-    card.owner_id = body.userId
-    card.claimed_at = new Date().toISOString()
-    return card
+    memoryCards.set(card.id, { ...card, owner_id: body.userId, claimed_at: new Date().toISOString() })
+    return memoryCards.get(card.id)
   }, { params: t.Object({ id: t.String({ minLength: 1, maxLength: 100 }) }), body: t.Object({ userId: t.Number() }) })
   .post('/nfc-cards/:id/transfer', async ({ params, body, headers, status }) => {
     const authUserId = await userIdFromAuth(headers)
@@ -349,26 +395,30 @@ const app = new Elysia()
     if (!card) return status(404, { error: 'card_not_found' })
     if (card.owner_id !== body.fromUserId) return status(409, { error: 'card_not_owned_by_sender' })
     if (card.former_owner_ids.includes(body.toUserId)) return status(409, { error: 'recipient_already_received_card' })
-    card.owner_id = body.toUserId
-    card.former_owner_ids.push(body.fromUserId)
-    card.transferred_at = new Date().toISOString()
-    return card
+    memoryCards.set(card.id, { ...card, owner_id: body.toUserId, former_owner_ids: [...card.former_owner_ids, body.fromUserId], transferred_at: new Date().toISOString() })
+    return memoryCards.get(card.id)
   }, { params: t.Object({ id: t.String({ minLength: 1, maxLength: 100 }) }), body: t.Object({ fromUserId: t.Number(), toUserId: t.Number() }) })
   .ws('/ws', {
-    open(ws) { ws.subscribe('lobby') },
+    open() {
+      // 匿名不再自动订阅全局频道;客户端必须显式 join
+    },
     message(ws, message) {
-      if (typeof message !== 'string') return
-      try {
-        const payload = JSON.parse(message) as { type?: string; sessionId?: string }
-        if (payload.type === 'join' && payload.sessionId) {
-          ws.subscribe(`session:${payload.sessionId}`)
-          ws.send(JSON.stringify({ type: 'joined', sessionId: payload.sessionId }))
+      let parsed: { type?: string; sessionId?: string } | undefined
+      try { parsed = typeof message === 'string' ? JSON.parse(message) : (message as { type?: string; sessionId?: string }) } catch { /* 纯文本 */ }
+      if (parsed && typeof parsed === 'object') {
+        if (parsed.type === 'join' && parsed.sessionId) {
+          ws.subscribe(parsed.sessionId === 'lobby' ? 'lobby' : `session:${parsed.sessionId}`)
+          ws.send(JSON.stringify({ type: 'joined', sessionId: parsed.sessionId }))
           return
         }
-        if (payload.type === 'game-action' && payload.sessionId) ws.publish(`session:${payload.sessionId}`, message)
-      } catch {
-        ws.publish('lobby', JSON.stringify({ type: 'message', content: message }))
+        if (parsed.type === 'game-action' && parsed.sessionId) {
+          const room = `session:${parsed.sessionId}`
+          if (ws.isSubscribed(room)) ws.publish(room, typeof message === 'string' ? message : JSON.stringify(message))
+          return
+        }
       }
+      // 纯文本消息只发给显式加入 lobby 的客户端,不再全局广播
+      if (ws.isSubscribed('lobby')) ws.publish('lobby', typeof message === 'string' ? JSON.stringify({ type: 'message', content: message }) : JSON.stringify(message))
     },
   })
   .listen(Number(process.env.PORT ?? 3000))

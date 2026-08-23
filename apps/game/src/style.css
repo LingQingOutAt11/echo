@@ -1991,3 +1991,26 @@ button {
   border-color: var(--border-focused);
   box-shadow: 0 0 0 3px var(--accent-gold-glow);
 }
+
+/* Error banner on quiz/dna pages */
+.error-banner {
+  margin-bottom: 16px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: rgba(190, 60, 60, 0.1);
+  border: 1px solid rgba(190, 60, 60, 0.35);
+  color: #b84a4a;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* Proximity wait exit */
+.proximity-error-text {
+  margin-top: 12px;
+  font-size: 13px;
+  color: #b84a4a;
+}
+.proximity-exit-btn {
+  margin-top: 16px;
+  min-width: 180px;
+}

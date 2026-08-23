@@ -1,6 +1,12 @@
-const API_URL = 'http://127.0.0.1:3000'
+// 小程序真机须在微信公众平台配置 request 合法域名,且要求 HTTPS。
+// 演示环境请改用开发者工具「不校验合法域名」,并填入实际服务器地址。
+const API_URL = 'http://81.70.185.14:3000'
 
-const request = (url, method, data) => new Promise((resolve, reject) => wx.request({ url, method, data, success: resolve, fail: reject }))
+const request = (url, method, data) => {
+  const token = wx.getStorageSync('ai-chemistry-auth-token')
+  const header = token ? { 'content-type': 'application/json', authorization: `Bearer ${token}` } : { 'content-type': 'application/json' }
+  return new Promise((resolve, reject) => wx.request({ url, method, data, header, success: resolve, fail: reject }))
+}
 
 Page({
   data: {

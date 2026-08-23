@@ -17,7 +17,7 @@ export function scoreAnswers(cards: Card[], answers: Record<string, string>) {
       for (const [key, value] of Object.entries(option.weights ?? {})) dimensions[key as Dimension] = clamp(dimensions[key as Dimension] + value)
       for (const tag of option.tags ?? []) {
         tags.push(tag)
-        if (['silent_treatment', 'lying', 'control', 'emotional_abuse', 'no_boundary', 'over_dependence', 'irresponsible', 'money_conflict', 'disrespect_parents', 'cancel_no_notice'].includes(tag)) dealBreakers.push(tag)
+        if (['silent_treatment', 'lying', 'control', 'emotional_abuse', 'no_boundary', 'over_dependence', 'irresponsible', 'money_conflict', 'disrespect_parents', 'cancel_no_notice', 'messy', 'disrespect', 'boundary_strict'].includes(tag)) dealBreakers.push(tag)
       }
     }
   }
@@ -67,26 +67,7 @@ export type IcebreakerGame = {
   goal: string
 }
 
-const gameCatalog: IcebreakerGame[] = [
-  { id: 'constellation', name: '共同点亮星图', reason: '你们的社交节奏差异明显，适合用两颗星一起找到同一片天空。', mechanic: '双方分别移动自己的光标，合并触碰同色星点。', goal: '在 60 秒内共同点亮 8 颗星星。' },
-  { id: 'bridge', name: '搭桥回家', reason: '你们的计划与随性互补，适合一起搭出一条能走通的路。', mechanic: '双方轮流放置桥板，让小动物走到终点。', goal: '共同放置 6 块桥板并抵达终点。' },
-  { id: 'relay', name: '默契接力', reason: '你们在主动与边界上有互补，适合用接力把节奏交给彼此。', mechanic: '一方收集光点，另一方负责开启下一段路线。', goal: '接力收集 10 个光点，不让能量归零。' },
-  { id: 'treasure', name: '隐藏卡寻宝', reason: '你们的匹配节奏轻松，适合用 NFC 隐藏卡开启一场短途寻宝。', mechanic: '读取隐藏卡后，双方在地图上协作找出三个宝箱。', goal: '找到 3 个宝箱并把隐藏卡送给对方。' },
-]
-
-export function selectIcebreakerGame(a: Dimensions, b: Dimensions, report: ChemistryReport): IcebreakerGame {
-  const socialContrast = Math.abs((a.social_battery ?? 50) - (b.social_battery ?? 50))
-  const planningContrast = Math.abs((a.planning ?? 50) - (b.planning ?? 50)) + Math.abs((a.spontaneity ?? 50) - (b.spontaneity ?? 50))
-  if (socialContrast >= 30) return gameCatalog[0]
-  if (planningContrast >= 70) return gameCatalog[1]
-  if (report.complements.length) return gameCatalog[2]
-  return gameCatalog[3]
-}
-
-export function icebreakerGames() { return gameCatalog }
-
-
-export function chemistry(a: Dimensions, b: Dimensions, tagsA: string[] = [], tagsB: string[] = []): ChemistryReport {
+export function chemistry(a: Dimensions, b: Dimensions, tagsA: string[] = [], tagsB: string[] = [], dealBreakersA: string[] = [], dealBreakersB: string[] = [], animalA?: Animal, animalB?: Animal): ChemistryReport {
   const differences = DIMENSIONS.map(({ id, label }) => ({ id, label, diff: Math.abs(a[id] - b[id]) }))
   const similarity = (1 - differences.reduce((sum, item) => sum + item.diff, 0) / (DIMENSIONS.length * 100)) * 40
   const common = differences.filter((item) => item.diff < 15).sort((x, y) => x.diff - y.diff).slice(0, 3).map((item) => `你们在${item.label}上很接近。`)
@@ -94,10 +75,17 @@ export function chemistry(a: Dimensions, b: Dimensions, tagsA: string[] = [], ta
   if ((a.planning > 70 && b.spontaneity > 70) || (b.planning > 70 && a.spontaneity > 70)) complements.push('一个擅长规划，一个擅长把计划变成意外。')
   if ((a.initiative > 70 && b.boundary > 70) || (b.initiative > 70 && a.boundary > 70)) complements.push('一个愿意推进，一个知道如何保留空间。')
   if ((a.chaos > 75 && b.chill > 75) || (b.chaos > 75 && a.chill > 75)) complements.push('一个负责热场，一个负责稳住节奏。')
+  if ((a.emotion > 75 && b.chill > 75) || (b.emotion > 75 && a.chill > 75)) complements.push('一个善于感受，一个提供安定的回应。')
+  const combo = animalCombo(animalA, animalB)
+  if (animalA?.id && animalA.id === animalB?.id) complements.push(`你们都是${animalA.emoji}${animalA.name}，一见如故的概率很高。`)
+  if (combo) complements.push(combo === '哈皮组合' ? `${combo}：一个负责热场，一个负责稳住。` : `${combo}：差异会给彼此带来新鲜视角。`)
   const friction: string[] = []
   if ((a.emotion > 75 && b.boundary > 75) || (b.emotion > 75 && a.boundary > 75)) friction.push('回复节奏可能不同：一方需要回应，一方需要空间。')
   if (Math.abs(a.planning - b.planning) > 40 && Math.abs(a.spontaneity - b.spontaneity) > 40) friction.push('旅行计划方式可能需要提前说清楚。')
-  const redLine = tagsA.some((tag) => tagsB.includes(tag))
-  const total = Math.round(Math.max(0, Math.min(100, similarity + Math.min(20, complements.length * 6) - friction.length * 5)) * (redLine ? .5 : 1))
-  return { total, common, complements, friction, redLine, judgment: redLine ? '存在价值观红线重叠，建议谨慎。' : '你们不是最像的两个人，但可能是很有火花的两个人。', firstMessage: `我看到你也在意${common[0]?.replace('你们在', '').replace('上很接近。', '') ?? '有趣的相处方式'}。如果明天突然不用上班，你最想做什么？` }
+  if (Math.abs(a.chaos - b.chaos) > 50 && Math.abs(a.chill - b.chill) > 50) friction.push('一方想整活，一方想放空，活动节奏要先商量。')
+  if (combo === '猫狗危机' || combo === '话痨×树懒') friction.push(`${combo}：彼此风格差异很大，适合慢一点建立默契。`)
+  const redLine = dealBreakersA.some((tag) => tagsB.includes(tag)) || dealBreakersB.some((tag) => tagsA.includes(tag))
+  const complementScore = Math.min(20, complements.length * 5 + (combo === '哈皮组合' ? 5 : 0))
+  const total = Math.round(clamp(similarity + complementScore - friction.length * 5) * (redLine ? .5 : 1))
+  return { total, common, complements: complements.slice(0, 2), friction: friction.slice(0, 2), redLine, combo, judgment: redLine ? '存在价值观红线重叠，建议谨慎。' : '你们不是最像的两个人，但可能是很有火花的两个人。', firstMessage: `我看到你也在意${common[0]?.replace('你们在', '').replace('上很接近。', '') ?? '有趣的相处方式'}。如果明天突然不用上班，你最想做什么？` }
 }
