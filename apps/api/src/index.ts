@@ -386,9 +386,9 @@ const app = new Elysia()
     const userId = Number(params.id)
     if (!(await requireOwner(headers, userId))) return status(401, { error: 'unauthorized' })
     if (database) {
-      const [source] = await database`SELECT id, nickname, age, city, job, purpose, bio, dimensions, animal, tags, deal_breakers FROM users WHERE id = ${userId} AND dimensions IS NOT NULL`
+      const [source] = await database`SELECT id, nickname, age, city, job, purpose, bio, dimensions, animal, tags, deal_breakers, gender FROM users WHERE id = ${userId} AND dimensions IS NOT NULL`
       if (!source) return status(404, { error: 'user_not_ready' })
-      const candidates = await database`SELECT id, nickname, age, city, job, purpose, bio, dimensions, animal, tags, deal_breakers FROM users WHERE id <> ${source.id} AND purpose = ${source.purpose} AND dimensions IS NOT NULL`
+      const candidates = await database`SELECT id, nickname, age, city, job, purpose, bio, dimensions, animal, tags, deal_breakers, gender FROM users WHERE id <> ${source.id} AND purpose = ${source.purpose} AND dimensions IS NOT NULL AND (${source.purpose} <> '恋爱' OR gender <> ${source.gender})`
       const [sourceAnswers, ...candidateAnswerRows] = await Promise.all([
         database`SELECT card_id, option_label FROM card_answers WHERE user_id = ${source.id}`,
         ...candidates.map((candidate) => database`SELECT card_id, option_label FROM card_answers WHERE user_id = ${candidate.id}`),
@@ -402,7 +402,7 @@ const app = new Elysia()
     const source = memoryUsers.get(userId)
     if (!source?.dimensions) return status(404, { error: 'user_not_ready' })
     const toAnswerRows = (user: StoredUser) => (user.answers ?? []).map((item) => ({ card_id: item.cardId, option_label: item.optionLabel }))
-    return [...memoryUsers.values()].filter((candidate) => candidate.id !== source.id && candidate.purpose === source.purpose && candidate.dimensions).map((candidate) => {
+    return [...memoryUsers.values()].filter((candidate) => candidate.id !== source.id && candidate.purpose === source.purpose && candidate.dimensions && (source.purpose !== '恋爱' || candidate.gender !== source.gender)).map((candidate) => {
       const report = reportFor(source, candidate)
       report.total = answerMatchScore(toAnswerRows(source), toAnswerRows(candidate))
       return { user: userRecord(candidate), report }
