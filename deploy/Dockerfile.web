@@ -1,8 +1,11 @@
 FROM oven/bun:1 AS build
 WORKDIR /app
-COPY . .
-WORKDIR /app/apps/game
+COPY package.json bun.lock ./
+COPY apps/game/package.json apps/game/package.json
+COPY apps/api/package.json apps/api/package.json
 RUN bun install --frozen-lockfile 2>/dev/null || bun install
+COPY apps/game apps/game
+WORKDIR /app/apps/game
 ENV VITE_API_URL=http://81.70.185.14:3000
 RUN bun run build
 
