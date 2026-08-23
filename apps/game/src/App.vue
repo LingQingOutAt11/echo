@@ -143,7 +143,7 @@ const tarotTransform = (index: number) => {
     pointerEvents: 'auto',
   }
 }
-const selectedMatch = computed(() => matches.value.find((item) => item.user.id === selectedMatchId.value) ?? null)
+const selectedMatch = computed(() => matches.value.find((item) => Number(item.user.id) === Number(selectedMatchId.value)) ?? null)
 const demoMatches = ref(false)
 const selectedReport = computed(() => selectedMatch.value?.report ?? chemistry(dna.value.dimensions, dna.value.dimensions, dna.value.tags, dna.value.tags, dna.value.dealBreakers, dna.value.dealBreakers, animal.value, animal.value))
 const selectedUser = computed(() => selectedMatch.value?.user ?? { id: 0, nickname: '等待匹配', age: 0, city: '', job: '', purpose: '', dimensions: dna.value.dimensions, tags: [] })
@@ -255,7 +255,7 @@ async function sendDm() {
   dmSending.value = true
   dmError.value = ''
   try {
-    const response = await apiFetch('/messages', { method: 'POST', body: JSON.stringify({ receiverId: selectedMatch.value.user.id, content: dmDraft.value.trim() }) })
+    const response = await apiFetch('/messages', { method: 'POST', body: JSON.stringify({ receiverId: Number(selectedMatch.value.user.id), content: dmDraft.value.trim() }) })
     if (response.ok) { dmDraft.value = ''; await refreshDmHistory() }
     else dmError.value = '消息发送失败，请重试。'
   } catch { dmError.value = '网络异常，消息未发送。' }
@@ -377,7 +377,12 @@ function populateDemoMatches() {
   const makeUser = (id: number, nickname: string, age: number, dimensions: Dimensions): User => ({ id, nickname, age, city: '上海', job: '现场参与者', purpose: profile.value.purpose, dimensions, tags: [], deal_breakers: [], animal: assignAnimal(dimensions) })
   const names = ['林澈', '安然', '肖野', '苏晚', '顾言', '程一', '许嘉', '周屿', '姜禾', '沈梨', '陆之', '温野', '秦墨', '夏栀', '韩旭', '叶青', '白露', '宋予', '穆川', '乔安']
   const users = ANIMALS.map((item, index) => makeUser(101 + index, names[index] ?? `伙伴${index + 1}`, 21 + (index % 12), item.vector))
-  matches.value = users.map((user) => ({ user, report: chemistry(dna.value.dimensions, user.dimensions, dna.value.tags, user.tags, dna.value.deal_breakers ?? [], animal.value, user.animal) }))
+  matches.value = users.map((user) => {
+    const report = chemistry(dna.value.dimensions, user.dimensions, dna.value.tags, user.tags, dna.value.deal_breakers ?? [], animal.value, user.animal)
+    // 推荐分随机分布在 80-98 之间
+    report.total = Math.round((80 + Math.random() * 18) * 10) / 10
+    return { user, report }
+  })
 }
 
 function openMatch(id: number) {
@@ -621,8 +626,15 @@ async function sendChat() {
         if (!data) continue
         try {
           const payload = JSON.parse(data)
-          if (event === 'delta' && payload.content) {
-            reply.text += payload.content.replace(/<br\s*\/?>/g, '\n')
+          const text = payload.content ?? payload.text ?? payload.message ?? (payload.delta && typeof payload.delta === 'string' ? payload.delta : undefined)
+          if (event === 'delta' && text) {
+            reply.text += String(text).replace(/<br\s*\/?>/g, '\n')
+            chatQueued.value = ''
+          } else if (event === 'message' && text) {
+            reply.text += String(text).replace(/<br\s*\/?>/g, '\n')
+            chatQueued.value = ''
+          } else if (event === 'content' && text) {
+            reply.text += String(text).replace(/<br\s*\/?>/g, '\n')
             chatQueued.value = ''
           } else if (event === 'reasoning' && payload.content) {
             reply.thinking = (reply.thinking ?? '') + payload.content
@@ -630,12 +642,24 @@ async function sendChat() {
             chatQueued.value = `排队中:前面还有 ${payload.position ?? '?'} 个请求,约 ${Math.round((payload.est_wait_ms ?? 0) / 1000)} 秒`
           } else if (event === 'error') {
             throw new Error(payload.message || '模型请求失败')
+          } else if (text) {
+            // 兜底：未知事件但携带文本内容时直接追加
+            reply.text += String(text).replace(/<br\s*\/?>/g, '\n')
+            chatQueued.value = ''
           }
         } catch (err) {
           if (err instanceof SyntaxError) continue
           throw err
         }
       }
+    }
+    // 非 SSE 响应兜底：整体读取并尝试解析 JSON 中的文本
+    if (!reply.text && buffer.trim()) {
+      try {
+        const whole = JSON.parse(buffer.trim())
+        const text = whole.content ?? whole.text ?? whole.message ?? whole.reply ?? whole.data?.content ?? whole.choices?.[0]?.message?.content
+        if (text) reply.text = String(text).replace(/<br\s*\/?>/g, '\n')
+      } catch { /* 非 JSON 文本直接展示 */ if (buffer.trim()) reply.text = buffer.trim() }
     }
     if (!reply.text) reply.text = '(没有收到回复)'
   } catch (err) {

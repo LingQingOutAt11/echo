@@ -8,6 +8,40 @@ const combos: Record<string, Combo> = { 'A07:A08': { name: '哈皮组合', type:
 const comboFor = (a?: Animal, b?: Animal) => a?.id && b?.id ? combos[[a.id, b.id].sort().join(':')] : undefined
 const clamp = (value: number) => Math.max(0, Math.min(100, Math.round(value)))
 
+// 基于答题相似度的匹配分：重合度越高分数越高，范围 80-98
+// answersA/answersB: Array<{ card_id: string; option_label: string }>
+export function answerMatchScore(answersA: Array<{ card_id: string; option_label: string }>, answersB: Array<{ card_id: string; option_label: string }>) {
+  if (!answersA.length || !answersB.length) return 88
+  const mapA = new Map<string, Set<string>>()
+  const mapB = new Map<string, Set<string>>()
+  for (const item of answersA) {
+    if (!mapA.has(item.card_id)) mapA.set(item.card_id, new Set())
+    mapA.get(item.card_id)!.add(item.option_label)
+  }
+  for (const item of answersB) {
+    if (!mapB.has(item.card_id)) mapB.set(item.card_id, new Set())
+    mapB.get(item.card_id)!.add(item.option_label)
+  }
+  const commonCards = [...mapA.keys()].filter((cardId) => mapB.has(cardId))
+  if (!commonCards.length) return 80
+  let hit = 0
+  let total = 0
+  for (const cardId of commonCards) {
+    const optionsA = mapA.get(cardId)!
+    const optionsB = mapB.get(cardId)!
+    const union = new Set([...optionsA, ...optionsB])
+    const intersect = [...optionsA].filter((option) => optionsB.has(option)).length
+    // 单卡相似度 = 交集/并集（多选也适用）
+    total += union.size
+    hit += intersect
+  }
+  const ratio = total ? hit / total : 0
+  // 以答题相似度为基准映射到 80-98，叠加随机扰动让推荐分自然分布在区间内
+  const base = 80 + ratio * 18
+  const jitter = (Math.random() - 0.5) * 6
+  return Math.min(98, Math.max(80, Math.round((base + jitter) * 10) / 10))
+}
+
 export function chemistry(a: Dimensions, b: Dimensions, tagsA: string[] = [], tagsB: string[] = [], dealBreakersA: string[] = [], dealBreakersB: string[] = [], animalA?: Animal, animalB?: Animal) {
   const differences = keys.map((id) => ({ id, diff: Math.abs((a[id] ?? 50) - (b[id] ?? 50)) }))
   const similarity = (1 - differences.reduce((sum, item) => sum + item.diff, 0) / (keys.length * 100)) * 40

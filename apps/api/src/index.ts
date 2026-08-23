@@ -1,7 +1,7 @@
 import { Elysia, t } from 'elysia'
 import { cors } from '@elysia/cors'
 import { SQL } from 'bun'
-import { chemistry } from './matching'
+import { chemistry, answerMatchScore } from './matching'
 import { getCombo, makeDestinyReading, shuffledDestinyDeck, type ComboKey, type DestinyCardKey, type DestinyQuestionKey } from './destiny'
 
 // 兜底日志:任何未捕获异常/拒绝都留痕,避免进程静默退出
@@ -333,16 +333,18 @@ const app = new Elysia()
   .post('/messages', async ({ body, headers, status }) => {
     const senderId = await userIdFromAuth(headers)
     if (!senderId) return status(401, { error: 'unauthorized' })
-    const receiver = await findUser(body.receiverId)
+    const receiverId = Number(body.receiverId)
+    if (!Number.isSafeInteger(receiverId)) return status(422, { error: 'invalid_receiver' })
+    const receiver = await findUser(receiverId)
     if (!receiver) return status(404, { error: 'receiver_not_found' })
     if (database) {
-      const [message] = await database`INSERT INTO messages (sender_id, receiver_id, content) VALUES (${senderId}, ${body.receiverId}, ${body.content}) RETURNING id, sender_id, receiver_id, content, created_at`
+      const [message] = await database`INSERT INTO messages (sender_id, receiver_id, content) VALUES (${senderId}, ${receiverId}, ${body.content}) RETURNING id, sender_id, receiver_id, content, created_at`
       return message
     }
-    const message: StoredMessage = { id: nextMessageId++, sender_id: senderId, receiver_id: body.receiverId, content: body.content, created_at: new Date().toISOString() }
+    const message: StoredMessage = { id: nextMessageId++, sender_id: senderId, receiver_id: receiverId, content: body.content, created_at: new Date().toISOString() }
     memoryMessages.set(message.id, message)
     return message
-  }, { body: t.Object({ receiverId: t.Number(), content: t.String({ minLength: 1, maxLength: 1000 }) }) })
+  }, { body: t.Object({ receiverId: t.Union([t.Number(), t.String()]), content: t.String({ minLength: 1, maxLength: 1000 }) }) })
   .get('/users/:id/matches', async ({ params, headers, status }) => {
     const userId = Number(params.id)
     if (!(await requireOwner(headers, userId))) return status(401, { error: 'unauthorized' })
@@ -350,11 +352,24 @@ const app = new Elysia()
       const [source] = await database`SELECT id, nickname, age, city, job, purpose, bio, dimensions, animal, tags, deal_breakers FROM users WHERE id = ${userId} AND dimensions IS NOT NULL`
       if (!source) return status(404, { error: 'user_not_ready' })
       const candidates = await database`SELECT id, nickname, age, city, job, purpose, bio, dimensions, animal, tags, deal_breakers FROM users WHERE id <> ${source.id} AND purpose = ${source.purpose} AND dimensions IS NOT NULL`
-      return candidates.map((candidate) => ({ user: candidate, report: reportFor(source as StoredUser, candidate as StoredUser) })).sort((a, b) => b.report.total - a.report.total).slice(0, 20)
+      const [sourceAnswers, ...candidateAnswerRows] = await Promise.all([
+        database`SELECT card_id, option_label FROM card_answers WHERE user_id = ${source.id}`,
+        ...candidates.map((candidate) => database`SELECT card_id, option_label FROM card_answers WHERE user_id = ${candidate.id}`),
+      ])
+      return candidates.map((candidate, index) => {
+        const report = reportFor(source as StoredUser, candidate as StoredUser)
+        report.total = answerMatchScore(sourceAnswers as Array<{ card_id: string; option_label: string }>, candidateAnswerRows[index] as Array<{ card_id: string; option_label: string }>)
+        return { user: candidate, report }
+      }).sort((a, b) => b.report.total - a.report.total).slice(0, 20)
     }
     const source = memoryUsers.get(userId)
     if (!source?.dimensions) return status(404, { error: 'user_not_ready' })
-    return [...memoryUsers.values()].filter((candidate) => candidate.id !== source.id && candidate.purpose === source.purpose && candidate.dimensions).map((candidate) => ({ user: userRecord(candidate), report: reportFor(source, candidate) })).sort((a, b) => b.report.total - a.report.total).slice(0, 20)
+    const toAnswerRows = (user: StoredUser) => (user.answers ?? []).map((item) => ({ card_id: item.cardId, option_label: item.optionLabel }))
+    return [...memoryUsers.values()].filter((candidate) => candidate.id !== source.id && candidate.purpose === source.purpose && candidate.dimensions).map((candidate) => {
+      const report = reportFor(source, candidate)
+      report.total = answerMatchScore(toAnswerRows(source), toAnswerRows(candidate))
+      return { user: userRecord(candidate), report }
+    }).sort((a, b) => b.report.total - a.report.total).slice(0, 20)
   }, { params: t.Object({ id: t.String({ pattern: '^\\d+$' }) }) })
   .post('/dual-sessions', async ({ body, headers, status }) => {
     const authUserId = await userIdFromAuth(headers)
@@ -480,7 +495,7 @@ const app = new Elysia()
     const gender = body.gender ?? process.env.COMPANION_GENDER ?? 'female'
     const age = user ? ageFromBirth(user.birth_datetime) : 25
     const query = body.system_prompt ? `${body.system_prompt}\n\n用户问题:${body.query}` : body.query
-    const upstream = await fetch(process.env.COMPANION_API_URL ?? 'https://hackathon.starrytalk.com/v1/tarot/reading', {
+    const upstream = await fetch(process.env.COMPANION_API_URL ?? 'https://hackathon.starrytalk.com/v1/companion/chat', {
       method: 'POST',
       headers: { 'content-type': 'application/json', accept: 'text/event-stream', authorization: `Bearer ${upstreamKey}` },
       body: JSON.stringify({ spread: body.spread ?? 'one_card', query, gender, age }),
