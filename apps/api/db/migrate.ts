@@ -7,12 +7,18 @@ if (!databaseUrl) throw new Error('DATABASE_URL is required')
 const database = new SQL(databaseUrl)
 await database`CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`
 const [applied] = await database`SELECT version FROM schema_migrations WHERE version = 'v1'`
-if (applied) {
-  console.log('Database schema already applied (v1), skipping')
-  await database.close()
-  process.exit(0)
+if (!applied) {
+  await database.file(fileURLToPath(new URL('./schema.sql', import.meta.url)))
+  await database`INSERT INTO schema_migrations (version) VALUES ('v1')`
+  console.log('Database schema applied (v1)')
 }
-await database.file(fileURLToPath(new URL('./schema.sql', import.meta.url)))
-await database`INSERT INTO schema_migrations (version) VALUES ('v1')`
-console.log('Database schema applied (v1)')
+
+const [appliedV2] = await database`SELECT version FROM schema_migrations WHERE version = 'v2'`
+if (!appliedV2) {
+  await database`ALTER TABLE dual_sessions ADD COLUMN IF NOT EXISTS destiny JSONB`
+  await database`ALTER TABLE proximity_peers ADD COLUMN IF NOT EXISTS user_id BIGINT REFERENCES users(id) ON DELETE SET NULL`
+  await database`ALTER TABLE proximity_peers ADD COLUMN IF NOT EXISTS dual_session_id TEXT REFERENCES dual_sessions(id) ON DELETE SET NULL`
+  await database`INSERT INTO schema_migrations (version) VALUES ('v2')`
+  console.log('Database schema applied (v2)')
+}
 await database.close()

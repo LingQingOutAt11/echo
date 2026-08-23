@@ -256,8 +256,14 @@ async function sendDm() {
   dmError.value = ''
   try {
     const response = await apiFetch('/messages', { method: 'POST', body: JSON.stringify({ receiverId: Number(selectedMatch.value.user.id), content: dmDraft.value.trim() }) })
-    if (response.ok) { dmDraft.value = ''; await refreshDmHistory() }
-    else dmError.value = '消息发送失败，请重试。'
+    if (response.ok) {
+      const sent = await response.json() as History['messages'][number]
+      history.value = { ...history.value, messages: [sent, ...history.value.messages] }
+      dmDraft.value = ''
+      await refreshDmHistory()
+    } else if (response.status === 401) dmError.value = '登录已失效，请重新登录后发送。'
+    else if (response.status === 404) dmError.value = '该匹配用户已不可用。'
+    else dmError.value = `消息发送失败（${response.status}），请重试。`
   } catch { dmError.value = '网络异常，消息未发送。' }
   finally { dmSending.value = false }
 }
@@ -435,7 +441,12 @@ async function startProximityPolling() {
     }
     try {
       const response = await fetch(`${API_URL}/proximity/announce`, { method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders() }, body: JSON.stringify({ deviceId: deviceId.value, targetDeviceId: proximityId.value || undefined }) })
-      if (!response.ok) { proximityError.value = '二维码配对服务暂时不可用，请稍后重试。'; return }
+      if (!response.ok) {
+        if (response.status === 401) proximityError.value = '登录已失效，请重新登录后再扫码配对。'
+        else if (response.status === 422) proximityError.value = '二维码已失效，请让出码方重新生成。'
+        else proximityError.value = `二维码配对服务暂时不可用（${response.status}），请稍后重试。`
+        return
+      }
       const data = await response.json() as { nearby?: boolean; sessionId?: string }
       if (data.nearby && data.sessionId) {
         sessionId.value = data.sessionId

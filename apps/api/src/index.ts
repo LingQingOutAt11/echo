@@ -320,7 +320,7 @@ const app = new Elysia()
     if (!(await requireOwner(headers, userId))) return status(401, { error: 'unauthorized' })
     if (database) {
       const sessions = await database`SELECT ds.id, ds.game, ds.rounds, ds.result, ds.status, ds.created_at, p.id AS partner_id, p.nickname AS partner_nickname, p.animal AS partner_animal FROM dual_sessions ds JOIN users p ON p.id = CASE WHEN ds.user_a = ${userId} THEN ds.user_b ELSE ds.user_a END WHERE ds.user_a = ${userId} OR ds.user_b = ${userId} ORDER BY ds.created_at DESC LIMIT 50`
-      const messages = await database`SELECT m.id, m.sender_id, m.receiver_id, m.content, m.created_at, s.nickname AS sender_nickname, r.nickname AS receiver_nickname FROM messages m JOIN users s ON s.id = m.sender_id JOIN users r ON r.id = m.receiver_id WHERE m.sender_id = ${userId} OR m.receiver_id = ${userId} ORDER BY m.created_at DESC LIMIT 100`
+      const messages = await database`SELECT m.id, m.sender_id, m.receiver_id, m.content, m.created_at, s.nickname AS sender_nickname, r.nickname AS receiver_nickname FROM messages m LEFT JOIN users s ON s.id = m.sender_id LEFT JOIN users r ON r.id = m.receiver_id WHERE m.sender_id = ${userId} OR m.receiver_id = ${userId} ORDER BY m.created_at DESC LIMIT 100`
       return { sessions, messages }
     }
     const sessions = [...memorySessions.values()].filter((session) => session.user_a === userId || session.user_b === userId).sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? '')).map((session) => {
