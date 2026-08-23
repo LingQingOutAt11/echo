@@ -168,7 +168,10 @@ const openPicker = (event: Event) => {
   try { input.showPicker?.() } catch { /* picker already open or unsupported */ }
 }
 const apiFetch = (path: string, options: RequestInit = {}) => fetch(`${API_URL}${path}`, { ...options, headers: { 'content-type': 'application/json', ...authHeaders(), ...(options.headers ?? {}) } })
-const selectedMessages = computed(() => selectedMatch.value ? history.value.messages.filter((message) => Number(message.sender_id) === selectedMatch.value!.user.id || Number(message.receiver_id) === selectedMatch.value!.user.id).sort((a, b) => a.created_at.localeCompare(b.created_at)) : [])
+const selectedMessages = computed(() => {
+  const partnerId = Number(selectedUser.value.id)
+  return partnerId ? history.value.messages.filter((message) => Number(message.sender_id) === partnerId || Number(message.receiver_id) === partnerId).sort((a, b) => a.created_at.localeCompare(b.created_at)) : []
+})
 
 async function syncAnswered(userId: number) {
   let local: string[] = []
@@ -241,7 +244,14 @@ const dmDraft = ref('')
 const dmSending = ref(false)
 const dmError = ref('')
 function stopDmPolling() { if (dmPollTimer) { clearInterval(dmPollTimer); dmPollTimer = null } }
-async function refreshDmHistory() { if (!userId.value || !authToken.value) return; const response = await apiFetch(`/users/${userId.value}/history`); if (response.ok) history.value = await response.json() as History }
+async function refreshDmHistory() {
+  if (!userId.value || !authToken.value) return
+  const response = await apiFetch(`/users/${userId.value}/history`)
+  if (!response.ok) return
+  const next = await response.json() as History
+  const messages = new Map([...history.value.messages, ...next.messages].map((message) => [message.id, message]))
+  history.value = { ...next, messages: [...messages.values()] }
+}
 function openDm() {
   if (!selectedMatch.value) return
   dmError.value = ''

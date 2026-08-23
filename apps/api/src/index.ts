@@ -173,7 +173,9 @@ const saveDestiny = async (session: StoredSession, destiny: DestinyState) => {
 }
 const sessionParticipant = async (session: StoredSession, headers: Record<string, string | undefined>) => {
   const userId = await userIdFromAuth(headers)
-  return userId && (userId === session.user_a || userId === session.user_b) ? userId : undefined
+  const userA = Number(session.user_a)
+  const userB = Number(session.user_b)
+  return userId && (userId === userA || userId === userB) ? userId : undefined
 }
 const revealDestiny = async (session: StoredSession, destiny: DestinyState, confirmedBy: number) => {
   if (!destiny.questionKey || !destiny.cardKey) return destiny
