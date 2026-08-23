@@ -41,6 +41,49 @@ let nextUserId = 1
 let nextAccountId = 1
 let nextMessageId = 1
 
+// ---- Mock 推荐用户池(20 人,动物塑与前端 engine.ts 保持一致) ----
+const DIMENSION_KEYS = ['explore', 'deep_talk', 'initiative', 'spontaneity', 'emotion', 'boundary', 'planning', 'social_battery', 'chill', 'chaos', 'cling', 'wit'] as const
+type MockAnimal = { id: string; emoji: string; name: string; title: string; tagline: string; image: string; vector: Dimensions }
+const mockAnimal = (id: string, emoji: string, name: string, title: string, tagline: string, vector: number[]): MockAnimal => ({ id, emoji, name, title, tagline, image: `/animals/${name}.webp`, vector: Object.fromEntries(DIMENSION_KEYS.map((key, index) => [key, vector[index]])) as Dimensions })
+const MOCK_ANIMALS: MockAnimal[] = [
+  mockAnimal('A01', '🦦', '海獭', '探索陪伴者', '什么都想试,但希望有人一起试', [85,70,75,80,75,40,35,80,55,70,80,75]), mockAnimal('A02', '🦊', '狐狸', '机敏独行者', '看起来随和,其实心里有数', [70,80,60,75,55,75,50,50,60,65,45,80]), mockAnimal('A03', '🐧', '企鹅', '忠诚守护者', '慢热但长情,认定了就很稳', [45,60,55,30,70,70,85,60,75,25,70,50]), mockAnimal('A04', '🦥', '树懒', '慢热观察家', '不是冷,是在加载中', [30,65,25,40,50,85,40,25,90,15,40,35]),
+  mockAnimal('A05', '🦁', '狮子', '气场主导者', '习惯拿主意,但不一定爱控场', [65,55,90,50,45,80,75,70,40,55,55,60]), mockAnimal('A06', '🐰', '兔子', '敏感回应者', '需要被看见,也需要被回应', [50,70,70,45,90,35,45,55,50,40,85,55]), mockAnimal('A07', '🐺', '哈士奇', '社交悍匪', '见人就嗨,聊天从不冷场', [90,45,85,95,50,30,20,95,40,98,60,90]), mockAnimal('A08', '🦫', '卡皮巴拉', '松弛大师', '情绪稳定到像开了勿扰模式', [40,55,35,50,25,50,30,45,98,20,50,60]),
+  mockAnimal('A09', '🐱', '猫', '高冷选择性亲密', '不是难接近,是要看对眼', [55,75,40,60,60,95,55,35,80,45,30,70]), mockAnimal('A10', '🐶', '金毛', '热情忠诚派', '对喜欢的人,尾巴摇到停不下来', [70,60,85,65,70,40,45,90,50,75,85,80]), mockAnimal('A11', '🦉', '猫头鹰', '深夜深聊家', '白天社恐,夜里能聊人生', [50,95,35,30,65,80,90,30,85,15,35,55]), mockAnimal('A12', '🐿️', '松鼠', '计划囤积者', '安全感来自「我都想好了」', [55,50,60,35,55,75,95,50,70,30,65,45]),
+  mockAnimal('A13', '🦋', '蝴蝶', '新鲜浪漫家', '容易被新鲜感吸引,也容易心动', [95,65,70,90,75,45,30,75,45,80,50,85]), mockAnimal('A14', '🐻', '熊', '可靠保护者', '话不多,但会在关键时刻站出来', [45,60,65,40,55,70,60,55,75,35,75,50]), mockAnimal('A15', '🦜', '鹦鹉', '气氛组组长', '有TA在,场子就不会冷', [75,55,90,70,60,35,40,98,55,85,70,95]), mockAnimal('A16', '🐙', '章鱼', '多线程适应者', '能同时聊三个话题还不乱', [80,85,65,75,70,60,50,70,50,70,55,75]),
+  mockAnimal('A17', '🦈', '鲨鱼', '目标效率派', '不喜欢无效社交,但认准了很高效', [60,45,95,55,30,85,80,60,35,50,30,45]), mockAnimal('A18', '🐼', '熊猫', '佛系可爱系', '能躺着绝不坐着,但意外治愈', [35,50,30,45,40,60,35,40,95,25,55,65]), mockAnimal('A19', '🦩', '火烈鸟', '仪式审美家', '约会要有氛围,细节不能输', [65,70,75,80,80,55,70,75,50,65,65,90]), mockAnimal('A20', '🐬', '海豚', '共情玩闹家', '既懂你的情绪,也能把你逗笑', [80,70,80,75,85,45,40,85,60,80,75,90]),
+]
+const MOCK_USER_ROWS: Array<{ nickname: string; age: number; birth_datetime: string; zodiac: string; mbti: string; city: string; job: string; purpose: '朋友' | '朋友' | '搭子'; bio: string; animalIdx: number; tags: string[]; deal_breakers: string[] }> = [
+  { nickname: '林澈', age: 25, birth_datetime: '1998-04-12T08:00:00', zodiac: '白羊座', mbti: 'INFP', city: '上海', job: '插画师', purpose: '朋友', bio: '画画以外,喜欢在巷子里找好吃的。', animalIdx: 1, tags: ['慢热聊天', '审美在线'], deal_breakers: ['已读不回'] },
+  { nickname: '安然', age: 27, birth_datetime: '1996-08-03T08:00:00', zodiac: '狮子座', mbti: 'ENTJ', city: '北京', job: '产品经理', purpose: '朋友', bio: '工作日拼方案,周末去爬山。', animalIdx: 4, tags: ['效率优先', '周末爬山'], deal_breakers: [] },
+  { nickname: '肖野', age: 26, birth_datetime: '1997-11-21T08:00:00', zodiac: '天蝎座', mbti: 'ISTP', city: '深圳', job: '无人机飞手', purpose: '朋友', bio: '说走就走的类型,剧本杀可以通宵。', animalIdx: 6, tags: ['说走就走', '剧本杀'], deal_breakers: ['安排控'] },
+  { nickname: '苏晚', age: 24, birth_datetime: '1999-03-09T08:00:00', zodiac: '双鱼座', mbti: 'ISFP', city: '杭州', job: '咖啡师', purpose: '朋友', bio: '拉花第一名,想和你分享新豆子。', animalIdx: 5, tags: ['共情力强', '甜品探店'], deal_breakers: [] },
+  { nickname: '顾言', age: 29, birth_datetime: '1994-07-17T08:00:00', zodiac: '天秤座', mbti: 'INTJ', city: '上海', job: '建筑师', purpose: '朋友', bio: '展览爱好者,聊得来比什么都重要。', animalIdx: 16, tags: ['深度话题', '展览控'], deal_breakers: ['无效社交'] },
+  { nickname: '程一', age: 23, birth_datetime: '2000-01-30T08:00:00', zodiac: '水瓶座', mbti: 'ENTP', city: '成都', job: '游戏策划', purpose: '朋友', bio: '脑洞很大,桌游永远有新花样。', animalIdx: 12, tags: ['脑洞大', '桌游'], deal_breakers: [] },
+  { nickname: '许嘉', age: 28, birth_datetime: '1995-09-14T08:00:00', zodiac: '处女座', mbti: 'ISTJ', city: '北京', job: '审计师', purpose: '朋友', bio: '行程安排得明明白白,羽毛球每周三场。', animalIdx: 2, tags: ['规划控', '羽毛球'], deal_breakers: ['迟到'] },
+  { nickname: '周屿', age: 30, birth_datetime: '1993-12-05T08:00:00', zodiac: '摩羯座', mbti: 'ESTJ', city: '上海', job: '律师', purpose: '朋友', bio: '看起来严肃,熟了话很多。', animalIdx: 13, tags: ['靠谱', '威士忌'], deal_breakers: [] },
+  { nickname: '姜禾', age: 25, birth_datetime: '1998-06-28T08:00:00', zodiac: '巨蟹座', mbti: 'INTP', city: '南京', job: '生物研究员', purpose: '朋友', bio: '夜猫子,播客囤了 300 期。', animalIdx: 10, tags: ['夜猫子', '播客'], deal_breakers: ['凌晨消息轰炸'] },
+  { nickname: '沈梨', age: 22, birth_datetime: '2001-05-19T08:00:00', zodiac: '金牛座', mbti: 'ESFP', city: '杭州', job: '主播', purpose: '朋友', bio: '气氛担当,livehouse 常驻选手。', animalIdx: 14, tags: ['气氛担当', 'livehouse'], deal_breakers: [] },
+  { nickname: '陆之', age: 27, birth_datetime: '1996-10-11T08:00:00', zodiac: '双子座', mbti: 'ENFJ', city: '广州', job: '品牌公关', purpose: '朋友', bio: '可以同时聊三个话题,咖啡续命。', animalIdx: 15, tags: ['多线聊天', '咖啡'], deal_breakers: [] },
+  { nickname: '温野', age: 24, birth_datetime: '1999-02-14T08:00:00', zodiac: '射手座', mbti: 'ENTP', city: '上海', job: '摄影师', purpose: '朋友', bio: '胶片爱好者,旅行说走就走。', animalIdx: 0, tags: ['说走就走', '胶片'], deal_breakers: ['被查岗'] },
+  { nickname: '秦墨', age: 31, birth_datetime: '1992-04-02T08:00:00', zodiac: '水瓶座', mbti: 'INFJ', city: '北京', job: '心理咨询师', purpose: '朋友', bio: '擅长倾听,也喜欢独立音乐。', animalIdx: 8, tags: ['倾听者', '独立音乐'], deal_breakers: [] },
+  { nickname: '夏栀', age: 23, birth_datetime: '2000-08-26T08:00:00', zodiac: '天秤座', mbti: 'ISFJ', city: '成都', job: '幼师', purpose: '朋友', bio: '温柔慢热,喜欢手作小东西。', animalIdx: 17, tags: ['温柔', '手作'], deal_breakers: ['不尊重爱好'] },
+  { nickname: '韩旭', age: 28, birth_datetime: '1995-05-23T08:00:00', zodiac: '白羊座', mbti: 'ESTP', city: '上海', job: '健身教练', purpose: '朋友', bio: '每天两练,周末带狗去公园。', animalIdx: 9, tags: ['运动', '狗狗'], deal_breakers: [] },
+  { nickname: '叶青', age: 26, birth_datetime: '1997-12-18T08:00:00', zodiac: '摩羯座', mbti: 'ISTJ', city: '苏州', job: '前端开发', purpose: '朋友', bio: '代码和徒步,二选一都在。', animalIdx: 11, tags: ['代码', '徒步'], deal_breakers: ['夺命连环问'] },
+  { nickname: '白露', age: 25, birth_datetime: '1998-09-07T08:00:00', zodiac: '巨蟹座', mbti: 'ENFP', city: '上海', job: '时尚编辑', purpose: '朋友', bio: '氛围感拉满,看展必去。', animalIdx: 18, tags: ['氛围感', '看展'], deal_breakers: [] },
+  { nickname: '宋予', age: 27, birth_datetime: '1996-03-30T08:00:00', zodiac: '双子座', mbti: 'INFP', city: '武汉', job: '咨询助理', purpose: '朋友', bio: '慢生活爱好者,猫咖常客。', animalIdx: 3, tags: ['慢生活', '猫咖'], deal_breakers: [] },
+  { nickname: '穆川', age: 29, birth_datetime: '1994-08-15T08:00:00', zodiac: '狮子座', mbti: 'ENTJ', city: '深圳', job: '创业者', purpose: '朋友', bio: '目标感很强,健身是唯一爱好。', animalIdx: 19, tags: ['目标感', '健身'], deal_breakers: ['已读不回'] },
+  { nickname: '乔安', age: 24, birth_datetime: '2001-11-11T08:00:00', zodiac: '射手座', mbti: 'ESFP', city: '上海', job: '舞蹈老师', purpose: '朋友', bio: '能躺着绝不坐着,但跳舞时很认真。', animalIdx: 7, tags: ['松弛', '舞蹈'], deal_breakers: [] },
+]
+const seedMockUsers = () => {
+  if (memoryUsers.size) return
+  for (const row of MOCK_USER_ROWS) {
+    const id = nextUserId++
+    const animal = MOCK_ANIMALS[row.animalIdx]
+    memoryUsers.set(id, { id, nickname: row.nickname, age: row.age, birth_datetime: row.birth_datetime, zodiac: row.zodiac, mbti: row.mbti, city: row.city, job: row.job, purpose: row.purpose, bio: row.bio, tags: row.tags, deal_breakers: row.deal_breakers, dimensions: animal.vector, animal })
+  }
+}
+seedMockUsers()
+
 const AUTH_TTL_MS = 30 * 24 * 60 * 60 * 1000
 
 const tags: Record<string, { slug: string; title: string; content: string; roomSlug: string }> = { demo: { slug: 'demo', title: '初见破冰', content: '欢迎来到第一次相遇。', roomSlug: 'first-meet' } }
@@ -249,7 +292,7 @@ const app = new Elysia()
       await database.begin(async (tx) => {
         await tx`DELETE FROM card_answers WHERE user_id = ${userId}`
         for (const answer of body.answers) await tx`INSERT INTO card_answers (user_id, card_id, option_label) VALUES (${userId}, ${answer.cardId}, ${answer.optionLabel})`
-        await tx`UPDATE users SET dimensions = ${JSON.stringify(body.dimensions)}::jsonb, animal = ${JSON.stringify(body.animal)}::jsonb, tags = ${tx.array(body.tags)}::text[], deal_breakers = ${tx.array(body.dealBreakers)}::text[] WHERE id = ${userId}`
+        await tx`UPDATE users SET dimensions = ${body.dimensions}::jsonb, animal = ${body.animal}::jsonb, tags = ${tx.array(body.tags)}::text[], deal_breakers = ${tx.array(body.dealBreakers)}::text[] WHERE id = ${userId}`
       })
       return { ok: true, userId }
     }
@@ -505,6 +548,6 @@ const app = new Elysia()
       if (ws.isSubscribed('lobby')) ws.publish('lobby', typeof message === 'string' ? JSON.stringify({ type: 'message', content: message }) : JSON.stringify(message))
     },
   })
-  .listen(Number(process.env.PORT ?? 3000))
+  .listen({ hostname: process.env.HOST ?? '0.0.0.0', port: Number(process.env.PORT ?? 3000) })
 
 console.log(`API running at ${app.server?.url}`)

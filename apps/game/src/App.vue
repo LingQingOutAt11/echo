@@ -6,7 +6,7 @@ import { CARDS, DIMENSIONS, type Card, type Dimensions } from './data'
 import { DESTINY_CARDS, DESTINY_QUESTIONS, destinyCard, destinyQuestion, shuffledDestinyDeck, type DestinyCardKey, type DestinyQuestionKey } from './destiny'
 import { animalCombo, assignAnimal, chemistry, dimensionHighlights, insight, scoreAnswers, type Animal } from './engine'
 
-const API_URL = import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:3000'
+const API_URL = import.meta.env.VITE_API_URL ?? `http://${window.location.hostname}:3000`
 const ZODIACS = ['白羊座', '金牛座', '双子座', '巨蟹座', '狮子座', '处女座', '天秤座', '天蝎座', '射手座', '摩羯座', '水瓶座', '双鱼座']
 const MBTIS = ['INTJ', 'INTP', 'ENTJ', 'ENTP', 'INFJ', 'INFP', 'ENFJ', 'ENFP', 'ISTJ', 'ISFJ', 'ESTJ', 'ESFJ', 'ISTP', 'ISFP', 'ESTP', 'ESFP']
 type User = { id: number; nickname: string; age: number; birth_datetime?: string; zodiac?: string; mbti?: string; city: string; job: string; purpose: string; bio: string; dimensions?: Dimensions; tags: string[]; deal_breakers?: string[]; animal?: Animal }
@@ -329,8 +329,9 @@ async function submitAnswers() {
 function populateDemoMatches() {
   demoMatches.value = true
   const makeUser = (id: number, nickname: string, age: number, dimensions: Dimensions): User => ({ id, nickname, age, city: '上海', job: '现场参与者', purpose: profile.value.purpose, dimensions, tags: [], deal_breakers: [], animal: assignAnimal(dimensions) })
-  const users = [makeUser(101, '林澈', 25, { ...dna.value.dimensions, planning: 76, boundary: 78 }), makeUser(102, '安然', 27, { ...dna.value.dimensions, deep_talk: 86, emotion: 80 }), makeUser(103, '肖野', 26, { ...dna.value.dimensions, explore: 88, spontaneity: 90 })]
-  matches.value = users.map((user) => ({ user, report: chemistry(dna.value.dimensions, user.dimensions, dna.value.tags, user.tags, dna.value.dealBreakers, user.deal_breakers ?? [], animal.value, user.animal) }))
+  const names = ['林澈', '安然', '肖野', '苏晚', '顾言', '程一', '许嘉', '周屿', '姜禾', '沈梨', '陆之', '温野', '秦墨', '夏栀', '韩旭', '叶青', '白露', '宋予', '穆川', '乔安']
+  const users = ANIMALS.map((item, index) => makeUser(101 + index, names[index] ?? `伙伴${index + 1}`, 21 + (index % 12), item.vector))
+  matches.value = users.map((user) => ({ user, report: chemistry(dna.value.dimensions, user.dimensions, dna.value.tags, user.tags, dna.value.deal_breakers ?? [], animal.value, user.animal) }))
 }
 
 function openMatch(id: number) {
@@ -751,7 +752,7 @@ async function sendChat() {
             class="match-card-luxury"
             @click="openMatch(item.user.id)"
           >
-            <div class="match-avatar-pill"><span class="avatar-letter">{{ item.user.animal?.emoji ?? item.user.nickname.slice(0, 1) }}</span></div>
+            <div class="match-avatar-pill"><img v-if="item.user.animal?.image" :src="item.user.animal.image" :alt="item.user.animal.name" class="match-avatar-img" /><span v-else class="avatar-letter">{{ item.user.nickname.slice(0, 1) }}</span></div>
             <div class="match-center-info">
               <div class="match-name-row">
                 <h3 class="match-user-name">{{ item.user.nickname }}</h3>
@@ -795,7 +796,7 @@ async function sendChat() {
           <span>返回雷达列表</span>
         </button>
 
-        <div class="detail-header-card"><div class="avatar-large-box"><span class="avatar-large-text">{{ selectedUser.animal?.emoji ?? selectedUser.nickname.slice(0, 1) }}</span><div class="online-indicator" /></div><div class="detail-user-main"><div class="user-badge-row"><span class="detail-pill">{{ selectedUser.purpose }}</span><span class="detail-loc">{{ selectedUser.city }}</span></div><h2 class="detail-nickname">{{ selectedUser.nickname }} · {{ selectedUser.animal?.name ?? '等待连接' }}</h2><p class="detail-job-text">{{ selectedUser.job }} · {{ selectedUser.animal?.title ?? '真实参与者' }}</p></div><div class="detail-chemistry-score"><span class="score-digit">{{ selectedReport.total }}</span><span class="score-tag">CHEMISTRY INDEX</span></div></div>
+        <div class="detail-header-card"><div class="avatar-large-box"><img v-if="selectedUser.animal?.image" :src="selectedUser.animal.image" :alt="selectedUser.animal.name" class="avatar-large-img" /><span v-else class="avatar-large-text">{{ selectedUser.nickname.slice(0, 1) }}</span><div class="online-indicator" /></div><div class="detail-user-main"><div class="user-badge-row"><span class="detail-pill">{{ selectedUser.purpose }}</span><span class="detail-loc">{{ selectedUser.city }}</span></div><h2 class="detail-nickname">{{ selectedUser.nickname }} · {{ selectedUser.animal?.name ?? '等待连接' }}</h2><p class="detail-job-text">{{ selectedUser.job }} · {{ selectedUser.animal?.title ?? '真实参与者' }}</p></div><div class="detail-chemistry-score"><span class="score-digit">{{ selectedReport.total }}</span><span class="score-tag">CHEMISTRY INDEX</span></div></div>
         <div class="animal-meet-card"><span>{{ animal.emoji }} {{ animal.name }}</span><strong>×</strong><span>{{ selectedUser.animal?.emoji ?? '🧪' }} {{ selectedUser.animal?.name ?? 'TA' }}</span><em>{{ selectedAnimalCombo ?? '相遇组合' }}</em></div>
 
         <div class="chemistry-cards-grid">
