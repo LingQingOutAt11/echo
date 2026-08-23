@@ -2077,3 +2077,28 @@ button {
 .destiny-opener { padding: 12px; background: #eef3ee; border: 1px dashed var(--flora-deep); }
 .destiny-opener b { display: block; color: var(--flora-deep); font: 800 11px var(--font-mono); margin-bottom: 5px; }
 @media (min-width: 680px) { .destiny-question-grid { grid-template-columns: repeat(2, 1fr); } .destiny-reveal { grid-template-columns: 190px 1fr; align-items: stretch; } }
+/* ============ Match Direct Message (dm) ============ */
+.match-card-actions { display: flex; align-items: center; }
+.match-chat-btn {
+  width: 40px; height: 40px; border-radius: 14px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--panel-bg); border: 2px solid var(--pixel-border);
+  color: var(--rose-deep); cursor: pointer; transition: transform 0.15s ease, background 0.15s ease;
+}
+.match-chat-btn:hover { transform: translateY(-2px); background: var(--rose-soft); }
+.match-chat-btn svg { width: 18px; height: 18px; }
+
+.detail-action-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: stretch; }
+.detail-action-row .primary-btn { flex: 1; min-width: 180px; }
+.detail-chat-btn .btn-icon-sm { width: 16px; height: 16px; margin-right: 6px; }
+.detail-chat-btn { display: inline-flex; align-items: center; justify-content: center; }
+
+.dm-stage .chat-window { min-height: 320px; max-height: 52vh; overflow-y: auto; }
+.dm-back-btn { margin-left: auto; white-space: nowrap; flex-shrink: 0; }
+.dm-avatar-fallback {
+  display: flex; align-items: center; justify-content: center;
+  font: 900 26px var(--font-display); color: var(--rose-deep);
+  background: var(--rose-soft);
+}
+.chat-time { display: block; margin-top: 4px; font: 11px var(--font-mono); color: var(--text-muted); opacity: 0.75; }
+.chat-msg.user .chat-time { color: rgba(255,255,255,0.8); text-align: right; }

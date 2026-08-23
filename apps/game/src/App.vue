@@ -45,7 +45,7 @@ function drawDeck() {
   tarotFlipped.value = false
   rotationAngle.value = 0
 }
-const page = ref<'auth' | 'profile' | 'account' | 'cards' | 'dna' | 'matches' | 'detail' | 'connect' | 'duo' | 'destiny' | 'result' | 'chat'>('auth')
+const page = ref<'auth' | 'profile' | 'account' | 'cards' | 'dna' | 'matches' | 'detail' | 'connect' | 'duo' | 'destiny' | 'result' | 'chat' | 'dm'>('auth')
 const profile = ref<{ nickname: string; birth_datetime: string; zodiac: string; mbti: string; city: string; job: string; purpose: '恋爱' | '朋友' | '搭子'; bio: string }>({ nickname: '', birth_datetime: '', zodiac: '', mbti: '', city: '上海', job: '', purpose: '朋友', bio: '' })
 const authMode = ref<'login' | 'register'>('login')
 const authBusy = ref(false)
@@ -53,7 +53,6 @@ const authToken = ref(localStorage.getItem('ai-chemistry-auth-token') ?? '')
 const authForm = ref({ username: '', password: '', nickname: '', birth_datetime: '', zodiac: '', mbti: '', city: '上海', job: '', purpose: '朋友' as '恋爱' | '朋友' | '搭子', bio: '' })
 const currentUser = ref<User | null>(null)
 const history = ref<History>({ sessions: [], messages: [] })
-const messageDraft = ref('')
 const answers = ref<Record<string, string>>({})
 const cardIndex = ref(0)
 const tarotFlipped = ref(false)
@@ -149,7 +148,7 @@ const selectedReport = computed(() => selectedMatch.value?.report ?? chemistry(d
 const selectedUser = computed(() => selectedMatch.value?.user ?? { id: 0, nickname: '等待匹配', age: 0, city: '', job: '', purpose: '', dimensions: dna.value.dimensions, tags: [] })
 const selectedAnimalCombo = computed(() => selectedMatch.value?.report.combo ?? animalCombo(animal.value, selectedMatch.value?.user.animal))
 const pageTitles: Record<string, { step: string; label: string }> = {
-  auth: { step: '00', label: '登录 / 注册' }, profile: { step: '01', label: '回声档案' }, account: { step: '00', label: '个人中心' }, cards: { step: '02', label: '心智卡牌' }, dna: { step: '03', label: '社交基因' }, matches: { step: '04', label: '火花雷达' }, detail: { step: '04', label: '化学解析' }, connect: { step: '05', label: '线下接触' }, duo: { step: '06', label: '破冰对决' }, destiny: { step: '06', label: '回声牌' }, result: { step: '06', label: '回声结论' }, chat: { step: '04', label: '内在小孩对话' },
+  auth: { step: '00', label: '登录 / 注册' }, profile: { step: '01', label: '回声档案' }, account: { step: '00', label: '个人中心' }, cards: { step: '02', label: '心智卡牌' }, dna: { step: '03', label: '社交基因' }, matches: { step: '04', label: '火花雷达' }, detail: { step: '04', label: '化学解析' }, dm: { step: '04', label: '在线聊天' }, connect: { step: '05', label: '线下接触' }, duo: { step: '06', label: '破冰对决' }, destiny: { step: '06', label: '回声牌' }, result: { step: '06', label: '回声结论' }, chat: { step: '04', label: '内在小孩对话' },
 }
 const destinyQuestionCurrent = computed(() => destinyQuestion(destiny.value?.questionKey))
 const destinyCardCurrent = computed(() => destinyCard(destiny.value?.cardKey))
@@ -168,7 +167,7 @@ const openPicker = (event: Event) => {
   try { input.showPicker?.() } catch { /* picker already open or unsupported */ }
 }
 const apiFetch = (path: string, options: RequestInit = {}) => fetch(`${API_URL}${path}`, { ...options, headers: { 'content-type': 'application/json', ...authHeaders(), ...(options.headers ?? {}) } })
-const selectedMessages = computed(() => selectedMatch.value ? history.value.messages.filter((message) => message.sender_id === selectedMatch.value!.user.id || message.receiver_id === selectedMatch.value!.user.id) : [])
+const selectedMessages = computed(() => selectedMatch.value ? history.value.messages.filter((message) => Number(message.sender_id) === selectedMatch.value!.user.id || Number(message.receiver_id) === selectedMatch.value!.user.id).sort((a, b) => a.created_at.localeCompare(b.created_at)) : [])
 
 async function syncAnswered(userId: number) {
   let local: string[] = []
@@ -228,7 +227,32 @@ async function submitAuth() {
   }
 }
 async function logout() { await apiFetch('/auth/logout', { method: 'POST' }).catch(() => undefined); authToken.value = ''; currentUser.value = null; userId.value = null; localStorage.removeItem('ai-chemistry-auth-token'); localStorage.removeItem('ai-chemistry-user-id'); page.value = 'auth' }
-async function sendMessage() { if (!selectedMatch.value || !messageDraft.value.trim()) return; const response = await apiFetch('/messages', { method: 'POST', body: JSON.stringify({ receiverId: selectedMatch.value.user.id, content: messageDraft.value.trim() }) }); if (response.ok) { messageDraft.value = ''; await loadHistory() } }
+let dmPollTimer: ReturnType<typeof setInterval> | null = null
+const dmDraft = ref('')
+const dmSending = ref(false)
+const dmError = ref('')
+function stopDmPolling() { if (dmPollTimer) { clearInterval(dmPollTimer); dmPollTimer = null } }
+async function refreshDmHistory() { if (!userId.value || !authToken.value) return; const response = await apiFetch(`/users/${userId.value}/history`); if (response.ok) history.value = await response.json() as History }
+function openDm() {
+  if (!selectedMatch.value) return
+  dmError.value = ''
+  page.value = 'dm'
+  void refreshDmHistory()
+  stopDmPolling()
+  dmPollTimer = setInterval(() => { void refreshDmHistory() }, 3000)
+}
+async function sendDm() {
+  if (!selectedMatch.value || !dmDraft.value.trim() || dmSending.value) return
+  dmSending.value = true
+  dmError.value = ''
+  try {
+    const response = await apiFetch('/messages', { method: 'POST', body: JSON.stringify({ receiverId: selectedMatch.value.user.id, content: dmDraft.value.trim() }) })
+    if (response.ok) { dmDraft.value = ''; await refreshDmHistory() }
+    else dmError.value = '消息发送失败，请重试。'
+  } catch { dmError.value = '网络异常，消息未发送。' }
+  finally { dmSending.value = false }
+}
+watch(page, (current) => { if (current !== 'dm') stopDmPolling() })
 const chemistryResult = computed(() => ({
   rapport: Math.round((roundScores.value.reduce((sum, score) => sum + score, 0) / Math.max(1, roundScores.value.length)) || 82),
   spark: Math.min(100, selectedReport.value.total + 10),
@@ -337,6 +361,11 @@ function populateDemoMatches() {
 function openMatch(id: number) {
   selectedMatchId.value = id
   page.value = 'detail'
+}
+
+function openDmFromCard(id: number) {
+  selectedMatchId.value = id
+  openDm()
 }
 
 async function openMatches() {
@@ -774,6 +803,10 @@ async function sendChat() {
               <div class="score-label">MATCH %</div>
             </div>
 
+            <div class="match-card-actions">
+              <button type="button" class="match-chat-btn" :aria-label="`和 ${item.user.nickname} 聊天`" @click.stop="openDmFromCard(item.user.id)"><svg viewBox="0 0 20 20" fill="currentColor"><path d="M2 5a2 2 0 012-2h7a2 2 0 012 2v4a2 2 0 01-2 2H9l-3 3v-3H4a2 2 0 01-2-2V5z"/><path d="M15 7v2a4 4 0 01-4 4H9.828l-1.766 1.767c.28.149.599.233.938.233h2l3 3v-3h2a2 2 0 002-2V9a2 2 0 00-2-2h-1z"/></svg></button>
+            </div>
+
             <div class="card-chevron">
               <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd"/></svg>
             </div>
@@ -852,12 +885,18 @@ async function sendChat() {
           <p class="starter-message">“{{ selectedReport.firstMessage }}”</p>
         </div>
 
-        <button class="primary-btn" @click="page = 'connect'">
-          <span class="btn-text">发起线下碰一碰破冰</span>
-          <div class="btn-arrow-box">
-            <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10.293 3.293a1 1 0 011.414 0l6 6a1 1 0 010 1.414l-6 6a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-4.293-4.293a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
-          </div>
-        </button>
+        <div class="detail-action-row">
+          <button class="primary-btn detail-chat-btn" @click="openDm">
+            <svg viewBox="0 0 20 20" fill="currentColor" class="btn-icon-sm"><path d="M2 5a2 2 0 012-2h7a2 2 0 012 2v4a2 2 0 01-2 2H9l-3 3v-3H4a2 2 0 01-2-2V5z"/><path d="M15 7v2a4 4 0 01-4 4H9.828l-1.766 1.767c.28.149.599.233.938.233h2l3 3v-3h2a2 2 0 002-2V9a2 2 0 00-2-2h-1z"/></svg>
+            <span class="btn-text">在线聊天</span>
+          </button>
+          <button class="primary-btn" @click="page = 'connect'">
+            <span class="btn-text">发起线下碰一碰破冰</span>
+            <div class="btn-arrow-box">
+              <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10.293 3.293a1 1 0 011.414 0l6 6a1 1 0 010 1.414l-6 6a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-4.293-4.293a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+            </div>
+          </button>
+        </div>
       </section>
 
       <!-- PAGE 06: Connect / NFC / QR -->
@@ -1110,6 +1149,40 @@ async function sendChat() {
           <input v-model="chatDraft" class="chat-input" placeholder="和 TA 说点什么…" maxlength="500" :disabled="chatStreaming" @keyup.enter="sendChat" />
           <button class="primary-btn chat-send-btn" :disabled="chatStreaming || !chatDraft.trim()" @click="sendChat">
             <span class="btn-text">{{ chatStreaming ? '思考中…' : '发送' }}</span>
+          </button>
+        </div>
+      </section>
+
+      <!-- PAGE 10: Match Direct Message Chat -->
+      <section v-else-if="page === 'dm'" class="page-content chat-stage dm-stage">
+        <div class="chat-header">
+          <img v-if="selectedUser.animal?.image" :src="selectedUser.animal.image" class="chat-avatar" :alt="selectedUser.animal.name" />
+          <div v-else class="chat-avatar dm-avatar-fallback">{{ selectedUser.nickname.slice(0, 1) }}</div>
+          <div class="chat-header-copy">
+            <h1 class="chat-title">{{ selectedUser.nickname }} · {{ selectedUser.animal?.name ?? '匹配用户' }}</h1>
+            <p class="chat-subtitle">{{ selectedUser.job }} · {{ selectedUser.city }} · 化学值 {{ selectedReport.total }}%</p>
+          </div>
+          <button class="back-link-btn dm-back-btn" @click="page = 'detail'"><span>返回</span></button>
+        </div>
+
+        <div class="chat-window">
+          <div v-if="!selectedMessages.length" class="chat-empty">
+            <p>你们还没有聊过天。<br />用推荐的第一句话开场：「{{ selectedReport.firstMessage }}」</p>
+          </div>
+          <div v-for="message in selectedMessages" :key="message.id" class="chat-msg" :class="Number(message.sender_id) === userId ? 'user' : 'peer'">
+            <img v-if="Number(message.sender_id) !== userId && selectedUser.animal?.image" :src="selectedUser.animal.image" class="chat-bubble-avatar" :alt="selectedUser.animal.name" />
+            <div class="chat-bubble">
+              <span class="chat-text">{{ message.content }}</span>
+              <span class="chat-time">{{ new Date(message.created_at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) }}</span>
+            </div>
+          </div>
+          <div v-if="dmError" class="chat-error">{{ dmError }}</div>
+        </div>
+
+        <div class="chat-input-row">
+          <input v-model="dmDraft" class="chat-input" :placeholder="`发消息给 ${selectedUser.nickname}…`" maxlength="1000" :disabled="dmSending" @keyup.enter="sendDm" />
+          <button class="primary-btn chat-send-btn" :disabled="dmSending || !dmDraft.trim()" @click="sendDm">
+            <span class="btn-text">{{ dmSending ? '发送中…' : '发送' }}</span>
           </button>
         </div>
       </section>
