@@ -2,12 +2,13 @@ import { Elysia, t } from 'elysia'
 import { cors } from '@elysia/cors'
 import { SQL } from 'bun'
 import { chemistry } from './matching'
+import { getCombo, makeDestinyReading, shuffledDestinyDeck, type ComboKey, type DestinyCardKey, type DestinyQuestionKey } from './destiny'
 
 type Dimensions = Record<string, number>
 type ChemistryReport = { total: number; complements: string[] }
 type Game = { id: 'constellation' | 'bridge' | 'relay' | 'treasure'; name: string; reason: string; mechanic: string; goal: string }
-type StoredUser = { id: number; username?: string; nickname: string; age: number; birth_datetime?: string; zodiac?: string; mbti?: string; city: string; job: string; purpose: string; bio: string; dimensions?: Dimensions; animal?: { id?: string; emoji?: string; name?: string; title?: string; tagline?: string; image?: string }; tags: string[]; deal_breakers: string[]; answers?: { cardId: string; optionLabel: string }[] }
-type StoredSession = { id: string; user_a: number; user_b: number; game: Game; rounds: unknown[]; result: unknown; status: string; created_at?: string }
+type DestinyState = { phase: 'question' | 'draw' | 'card_pending' | 'revealed'; questionKey?: DestinyQuestionKey; selectedBy?: number; confirmedBy?: number; selectedAt?: number; deck: DestinyCardKey[]; cardKey?: DestinyCardKey; selectedCardBy?: number; confirmedCardBy?: number; cardSelectedAt?: number; comboKey?: ComboKey; comboName?: string; reading?: { prophecy: string; quote: string; opener: string }; createdAt: number }
+type StoredSession = { id: string; user_a: number; user_b: number; game: Game; rounds: unknown[]; result: unknown; status: string; destiny?: DestinyState; created_at?: string }
 type StoredCard = { id: string; title: string; content: string; owner_id: number | null; claimed_at: string | null; transferred_at: string | null; former_owner_ids: number[] }
 type StoredAccount = { id: number; user_id: number; username: string; password_hash: string }
 type StoredMessage = { id: number; sender_id: number; receiver_id: number; content: string; created_at: string }
@@ -18,7 +19,7 @@ const memoryAccounts = new Map<number, StoredAccount>()
 const memoryTokens = new Map<string, { accountId: number; expiresAt: number }>()
 const memorySessions = new Map<string, StoredSession>()
 const memoryMessages = new Map<number, StoredMessage>()
-type ProximityPeer = { deviceId: string; lastSeen: number; sessionId?: string }
+type ProximityPeer = { deviceId: string; lastSeen: number; userId?: number; dualSessionId?: string }
 type ProximitySession = { id: string; devices: string[]; game: Game; createdAt: string }
 const memoryProximityPeers = new Map<string, ProximityPeer>()
 const memoryProximitySessions = new Map<string, ProximitySession>()
@@ -53,7 +54,7 @@ const ageFromBirth = (birth: string) => {
 const dimensionsSchema = t.Record(t.String(), t.Number({ minimum: 0, maximum: 100 }))
 const profileSchema = t.Object({ nickname: t.String({ minLength: 1, maxLength: 40 }), birth_datetime: t.String({ minLength: 10, maxLength: 40 }), zodiac: t.Union(ZODIACS.map((item) => t.Literal(item))), mbti: t.Union(MBTIS.map((item) => t.Literal(item))), city: t.String({ minLength: 1, maxLength: 40 }), job: t.String({ minLength: 1, maxLength: 80 }), purpose: t.Union([t.Literal('恋爱'), t.Literal('朋友'), t.Literal('搭子')]), bio: t.Optional(t.String({ maxLength: 200 })), avatarUrl: t.Optional(t.String({ maxLength: 500 })) })
 const credentialsSchema = t.Object({ username: t.String({ minLength: 2, maxLength: 40, pattern: '^\\S+$' }), password: t.String({ minLength: 6, maxLength: 100 }) })
-const registerSchema = t.Intersect([credentialsSchema, profileSchema])
+const registerSchema = t.Object({ username: t.String({ minLength: 2, maxLength: 40, pattern: '^\\S+$' }), password: t.String({ minLength: 6, maxLength: 100 }), nickname: t.String({ minLength: 1, maxLength: 40 }), birth_datetime: t.String({ minLength: 10, maxLength: 40 }), zodiac: t.Union(ZODIACS.map((item) => t.Literal(item))), mbti: t.Union(MBTIS.map((item) => t.Literal(item))), city: t.String({ minLength: 1, maxLength: 40 }), job: t.String({ minLength: 1, maxLength: 80 }), purpose: t.Union([t.Literal('恋爱'), t.Literal('朋友'), t.Literal('搭子')]), bio: t.Optional(t.String({ maxLength: 200 })), avatarUrl: t.Optional(t.String({ maxLength: 500 })) })
 
 
 const selectGame = (a: Dimensions, b: Dimensions, report: ChemistryReport): Game => {
@@ -95,6 +96,51 @@ const userIdFromAuth = async (headers: Record<string, string | undefined>) => {
   return memoryAccountForToken(headers)?.user_id
 }
 const requireOwner = async (headers: Record<string, string | undefined>, requestedId: number) => (await userIdFromAuth(headers)) === requestedId
+const readJson = <T>(value: unknown): T | undefined => {
+  if (!value) return undefined
+  if (typeof value !== 'string') return value as T
+  try { return JSON.parse(value) as T } catch { return undefined }
+}
+const createDualSession = async (userAId: number, userBId: number) => {
+  if (userAId === userBId) return undefined
+  const userA = await findUser(userAId)
+  const userB = await findUser(userBId)
+  if (!userA?.dimensions || !userB?.dimensions) return undefined
+  const session: StoredSession = { id: crypto.randomUUID(), user_a: userAId, user_b: userBId, game: selectGame(userA.dimensions, userB.dimensions, reportFor(userA, userB)), rounds: [], result: null, status: 'ready', created_at: new Date().toISOString() }
+  if (database) {
+    const [stored] = await database`INSERT INTO dual_sessions (id, user_a, user_b, game, status) VALUES (${session.id}, ${session.user_a}, ${session.user_b}, ${JSON.stringify(session.game)}::jsonb, ${session.status}) RETURNING id, user_a, user_b, game, rounds, result, status, destiny, created_at`
+    return stored as StoredSession
+  }
+  memorySessions.set(session.id, session)
+  return session
+}
+const readSession = async (id: string) => database
+  ? (await database`SELECT id, user_a, user_b, game, rounds, result, status, destiny, created_at FROM dual_sessions WHERE id = ${id}`)[0] as StoredSession | undefined
+  : memorySessions.get(id)
+const saveDestiny = async (session: StoredSession, destiny: DestinyState) => {
+  session.destiny = destiny
+  if (database) await database`UPDATE dual_sessions SET destiny = ${JSON.stringify(destiny)}::jsonb WHERE id = ${session.id}`
+  else memorySessions.set(session.id, session)
+  return destiny
+}
+const sessionParticipant = async (session: StoredSession, headers: Record<string, string | undefined>) => {
+  const userId = await userIdFromAuth(headers)
+  return userId && (userId === session.user_a || userId === session.user_b) ? userId : undefined
+}
+const revealDestiny = async (session: StoredSession, destiny: DestinyState, confirmedBy: number) => {
+  if (!destiny.questionKey || !destiny.cardKey) return destiny
+  const [userA, userB] = await Promise.all([findUser(session.user_a), findUser(session.user_b)])
+  const combo = getCombo(userA?.animal, userB?.animal)
+  return saveDestiny(session, { ...destiny, phase: 'revealed', confirmedCardBy: confirmedBy, comboKey: combo.key, comboName: combo.name, reading: makeDestinyReading(destiny.questionKey, destiny.cardKey, combo.key) })
+}
+const advanceDestinyTimeout = async (session: StoredSession, destiny: DestinyState) => {
+  const now = Date.now()
+  if (destiny.phase === 'question' && !destiny.questionKey && now - destiny.createdAt >= 15_000) {
+    return saveDestiny(session, { ...destiny, phase: 'draw', questionKey: 'lost', selectedBy: 0, confirmedBy: 0, selectedAt: now })
+  }
+  if (destiny.phase === 'card_pending' && destiny.cardSelectedAt && now - destiny.cardSelectedAt >= 10_000) return revealDestiny(session, destiny, 0)
+  return destiny
+}
 
 const cleanupTimer = setInterval(() => {
   const now = Date.now()
@@ -306,26 +352,59 @@ const app = new Elysia()
     memorySession.status = 'completed'
     return memorySession
   }, { params: t.Object({ id: t.String({ minLength: 1, maxLength: 100 }) }), body: t.Object({ rounds: t.Array(t.Unknown()), result: t.Unknown() }) })
-  .post('/proximity/announce', async ({ body, status }) => {
+  .post('/dual-sessions/:id/destiny/start', async ({ params, headers, status }) => {
+    const session = await readSession(params.id)
+    if (!session) return status(404, { error: 'session_not_found' })
+    if (!(await sessionParticipant(session, headers))) return status(401, { error: 'unauthorized' })
+    const destiny = readJson<DestinyState>(session.destiny) ?? { phase: 'question' as const, deck: shuffledDestinyDeck(), createdAt: Date.now() }
+    return saveDestiny(session, destiny)
+  }, { params: t.Object({ id: t.String({ minLength: 1, maxLength: 100 }) }) })
+  .get('/dual-sessions/:id/destiny', async ({ params, headers, status }) => {
+    const session = await readSession(params.id)
+    if (!session) return status(404, { error: 'session_not_found' })
+    if (!(await sessionParticipant(session, headers))) return status(401, { error: 'unauthorized' })
+    const destiny = readJson<DestinyState>(session.destiny)
+    return destiny ? await advanceDestinyTimeout(session, destiny) : status(404, { error: 'destiny_not_started' })
+  }, { params: t.Object({ id: t.String({ minLength: 1, maxLength: 100 }) }) })
+  .post('/dual-sessions/:id/destiny/action', async ({ params, body, headers, status }) => {
+    const session = await readSession(params.id)
+    if (!session) return status(404, { error: 'session_not_found' })
+    const actor = await sessionParticipant(session, headers)
+    if (!actor) return status(401, { error: 'unauthorized' })
+    const destiny = readJson<DestinyState>(session.destiny)
+    if (!destiny) return status(409, { error: 'destiny_not_started' })
+    if (body.action === 'select_question' && destiny.phase === 'question' && typeof body.key === 'string') {
+      if (!['lost', 'collab', 'secret', 'unspoken', 'year_later'].includes(body.key)) return status(422, { error: 'invalid_question' })
+      return saveDestiny(session, { ...destiny, questionKey: body.key as DestinyQuestionKey, selectedBy: actor, selectedAt: Date.now() })
+    }
+    if (body.action === 'confirm_question' && destiny.phase === 'question' && destiny.questionKey && destiny.selectedBy !== actor) {
+      return saveDestiny(session, { ...destiny, phase: 'draw', confirmedBy: actor })
+    }
+    if (body.action === 'select_card' && destiny.phase === 'draw' && typeof body.key === 'string' && destiny.deck.includes(body.key as DestinyCardKey)) {
+      return saveDestiny(session, { ...destiny, phase: 'card_pending', cardKey: body.key as DestinyCardKey, selectedCardBy: actor, cardSelectedAt: Date.now() })
+    }
+    if (body.action === 'confirm_card' && destiny.phase === 'card_pending' && destiny.cardKey && destiny.selectedCardBy !== actor) return revealDestiny(session, destiny, actor)
+    return status(409, { error: 'invalid_destiny_transition' })
+  }, { params: t.Object({ id: t.String({ minLength: 1, maxLength: 100 }) }), body: t.Object({ action: t.Union([t.Literal('select_question'), t.Literal('confirm_question'), t.Literal('select_card'), t.Literal('confirm_card')]), key: t.Optional(t.String({ maxLength: 40 })) }) })
+  .post('/proximity/announce', async ({ body, headers, status }) => {
     const now = Date.now()
+    const userId = await userIdFromAuth(headers)
+    if (!userId) return status(401, { error: 'unauthorized' })
     if (database) {
       await database`DELETE FROM proximity_peers WHERE last_seen < ${new Date(now - 15_000)}`
-      const [existing] = await database`SELECT device_id, session_id FROM proximity_peers WHERE device_id <> ${body.deviceId} AND last_seen > ${new Date(now - 15_000)} LIMIT 1`
-      const sessionId = existing?.session_id ?? crypto.randomUUID()
-      if (!existing) await database`INSERT INTO proximity_sessions (id, game) VALUES (${sessionId}, ${JSON.stringify(proximityGame)}::jsonb) ON CONFLICT (id) DO NOTHING`
-      await database`INSERT INTO proximity_peers (device_id, session_id, last_seen) VALUES (${body.deviceId}, ${sessionId}, ${new Date(now)}) ON CONFLICT (device_id) DO UPDATE SET session_id = EXCLUDED.session_id, last_seen = EXCLUDED.last_seen`
-      return { nearby: Boolean(existing), sessionId, game: proximityGame }
+      const [existing] = await database`SELECT device_id, user_id, dual_session_id FROM proximity_peers WHERE device_id <> ${body.deviceId} AND last_seen > ${new Date(now - 15_000)} LIMIT 1`
+      let dualSessionId = existing?.dual_session_id as string | undefined
+      if (existing?.user_id && Number(existing.user_id) !== userId && !dualSessionId) dualSessionId = (await createDualSession(Number(existing.user_id), userId))?.id
+      await database`INSERT INTO proximity_peers (device_id, user_id, dual_session_id, last_seen) VALUES (${body.deviceId}, ${userId}, ${dualSessionId ?? null}, ${new Date(now)}) ON CONFLICT (device_id) DO UPDATE SET user_id = EXCLUDED.user_id, dual_session_id = EXCLUDED.dual_session_id, last_seen = EXCLUDED.last_seen`
+      if (existing?.device_id && dualSessionId) await database`UPDATE proximity_peers SET dual_session_id = ${dualSessionId} WHERE device_id = ${existing.device_id}`
+      return { nearby: Boolean(existing?.user_id && Number(existing.user_id) !== userId), sessionId: dualSessionId, game: dualSessionId ? proximityGame : undefined }
     }
     const existing = [...memoryProximityPeers.values()].find((peer) => peer.deviceId !== body.deviceId && now - peer.lastSeen < 15_000)
-    const peer: ProximityPeer = { deviceId: body.deviceId, lastSeen: now, sessionId: existing?.sessionId }
-    if (existing) {
-      const sessionId = existing.sessionId ?? crypto.randomUUID()
-      existing.sessionId = sessionId
-      peer.sessionId = sessionId
-      if (!memoryProximitySessions.has(sessionId)) memoryProximitySessions.set(sessionId, { id: sessionId, devices: [existing.deviceId, peer.deviceId], game: proximityGame, createdAt: new Date().toISOString() })
-    }
-    memoryProximityPeers.set(body.deviceId, peer)
-    return { nearby: Boolean(existing), sessionId: peer.sessionId, game: peer.sessionId ? proximityGame : undefined }
+    let dualSessionId = existing?.dualSessionId
+    if (existing?.userId && existing.userId !== userId && !dualSessionId) dualSessionId = (await createDualSession(existing.userId, userId))?.id
+    memoryProximityPeers.set(body.deviceId, { deviceId: body.deviceId, lastSeen: now, userId, dualSessionId })
+    if (existing && dualSessionId) existing.dualSessionId = dualSessionId
+    return { nearby: Boolean(existing?.userId && existing.userId !== userId), sessionId: dualSessionId, game: dualSessionId ? proximityGame : undefined }
   }, { body: t.Object({ deviceId: t.String({ minLength: 8, maxLength: 100 }) }) })
   .get('/proximity/:id', async ({ params, status }) => {
     if (database) {
