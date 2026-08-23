@@ -7,11 +7,12 @@ const labels: Record<string, string> = { explore: '探索欲', deep_talk: '深�
 const combos: Record<string, Combo> = { 'A07:A08': { name: '哈皮组合', type: '互补' }, 'A07:A09': { name: '猫狗危机', type: '摩擦型' }, 'A09:A10': { name: '猫狗组合', type: '互补' }, 'A11:A13': { name: '夜蝶组合', type: '互补' }, 'A05:A06': { name: '狮兔组合', type: '互补' }, 'A03:A14': { name: '稳如泰山', type: '相似' }, 'A17:A20': { name: '效率×共情', type: '互补' }, 'A08:A18': { name: '双倍松弛', type: '相似' }, 'A04:A15': { name: '话痨×树懒', type: '摩擦型' } }
 const comboFor = (a?: Animal, b?: Animal) => a?.id && b?.id ? combos[[a.id, b.id].sort().join(':')] : undefined
 const clamp = (value: number) => Math.max(0, Math.min(100, Math.round(value)))
+const matchScore = (value: number) => Math.min(98, Math.max(80.1, Math.round(value * 10) / 10))
 
 // 基于答题相似度的匹配分：重合度越高分数越高，范围 80-98
 // answersA/answersB: Array<{ card_id: string; option_label: string }>
 export function answerMatchScore(answersA: Array<{ card_id: string; option_label: string }>, answersB: Array<{ card_id: string; option_label: string }>) {
-  if (!answersA.length || !answersB.length) return 88
+  if (!answersA.length || !answersB.length) return matchScore(87 + Math.random() * 2)
   const mapA = new Map<string, Set<string>>()
   const mapB = new Map<string, Set<string>>()
   for (const item of answersA) {
@@ -23,7 +24,7 @@ export function answerMatchScore(answersA: Array<{ card_id: string; option_label
     mapB.get(item.card_id)!.add(item.option_label)
   }
   const commonCards = [...mapA.keys()].filter((cardId) => mapB.has(cardId))
-  if (!commonCards.length) return 80
+  if (!commonCards.length) return matchScore(81 + Math.random() * 3)
   let hit = 0
   let total = 0
   for (const cardId of commonCards) {
@@ -37,9 +38,9 @@ export function answerMatchScore(answersA: Array<{ card_id: string; option_label
   }
   const ratio = total ? hit / total : 0
   // 以答题相似度为基准映射到 80-98，叠加随机扰动让推荐分自然分布在区间内
-  const base = 80 + ratio * 18
-  const jitter = (Math.random() - 0.5) * 6
-  return Math.min(98, Math.max(80, Math.round((base + jitter) * 10) / 10))
+  const base = 81 + ratio * 16
+  const jitter = (Math.random() - 0.5) * 2
+  return matchScore(base + jitter)
 }
 
 export function chemistry(a: Dimensions, b: Dimensions, tagsA: string[] = [], tagsB: string[] = [], dealBreakersA: string[] = [], dealBreakersB: string[] = [], animalA?: Animal, animalB?: Animal) {
