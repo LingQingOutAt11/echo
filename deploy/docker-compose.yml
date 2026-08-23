@@ -12,7 +12,7 @@ services:
       - "3000:3000"
     environment:
       PORT: "3000"
-      COMPANION_API_KEY: ${COMPANION_API_KEY:-sk-hack-REPLACED}
+      COMPANION_API_KEY: ${COMPANION_API_KEY:-}
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3000/health || exit 1"]
       interval: 10s

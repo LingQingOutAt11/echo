@@ -298,7 +298,7 @@ const app = new Elysia()
       headers: {
         'content-type': 'application/json',
         accept: 'text/event-stream',
-        authorization: `Bearer ${process.env.COMPANION_API_KEY ?? 'sk-hack-REPLACED'}`,
+        authorization: `Bearer ${process.env.COMPANION_API_KEY ?? ''}`,
       },
       body: JSON.stringify(body),
     })
