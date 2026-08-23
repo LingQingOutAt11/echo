@@ -1,12 +1,12 @@
 {
   "expo": {
-    "name": "初见",
-    "slug": "heikesong",
+    "name": "回声",
+    "slug": "echo",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
-    "scheme": "heikesong",
+    "scheme": "echo",
     "plugins": [
       "expo-dev-client",
       "expo-notifications",
@@ -14,7 +14,7 @@
       ["react-native-ble-manager", { "isBleRequired": false, "neverForLocation": true, "bluetoothAlwaysPermission": "用于发现附近正在等待破冰的手机。" }]
     ],
     "ios": {
-      "bundleIdentifier": "com.heikesong.chujian",
+      "bundleIdentifier": "com.echo.app",
       "buildNumber": "1",
       "supportsTablet": true,
       "infoPlist": {
@@ -24,7 +24,7 @@
       }
     },
     "android": {
-      "package": "com.heikesong.chujian",
+      "package": "com.echo.app",
       "versionCode": 1,
       "permissions": ["NFC", "POST_NOTIFICATIONS", "BLUETOOTH_SCAN", "BLUETOOTH_CONNECT", "BLUETOOTH_ADVERTISE", "ACCESS_FINE_LOCATION"],
       "adaptiveIcon": {

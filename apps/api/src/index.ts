@@ -89,7 +89,7 @@ const requireOwner = async (headers: Record<string, string | undefined>, request
 
 const app = new Elysia()
   .use(cors())
-  .get('/health', () => ({ ok: true, service: 'heikesong-api', storage: database ? 'postgres' : 'memory' }))
+  .get('/health', () => ({ ok: true, service: 'echo-api', storage: database ? 'postgres' : 'memory' }))
   .post('/auth/register', async ({ body, status }) => {
     const username = body.username.trim().toLowerCase()
     const passwordHash = await hashPassword(body.password)

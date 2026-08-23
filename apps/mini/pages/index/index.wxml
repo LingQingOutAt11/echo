@@ -6,7 +6,7 @@
   <view class="topbar">
     <view class="brand-row">
       <view class="brand-dot"></view>
-      <text class="brand">HEIKESONG <text class="brand-em">/ 初见</text></text>
+      <text class="brand">ECHO <text class="brand-em">/ 回声</text></text>
     </view>
     <view class="status-tag">OFFLINE READY</view>
   </view>

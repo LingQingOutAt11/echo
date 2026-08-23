@@ -1,4 +1,4 @@
-# 初见 Native 安装与发布
+# 回声 Native 安装与发布
 
 ## 1. 配置地址
 
@@ -70,9 +70,9 @@ pnpm exec expo run:ios --device
 
 ## 6. “碰一碰”能力
 
-两台 App 都打开并停留在初见页时，Native App 会：
+两台 App 都打开并停留在回声页时，Native App 会：
 
-1. BLE 广播 `HEIKESONG_NEAR`；
+1. BLE 广播 `ECHO_NEAR`；
 2. BLE 扫描同一服务 UUID；
 3. 发现附近设备后调用 `/proximity/announce`；
 4. 服务端生成临时 proximity session；

@@ -1,5 +1,5 @@
 {
-  "name": "@heikesong/game",
+  "name": "@echo/game",
   "private": true,
   "type": "module",
   "scripts": {

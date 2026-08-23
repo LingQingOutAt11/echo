@@ -123,7 +123,7 @@ const selectedReport = computed(() => selectedMatch.value?.report ?? chemistry(d
 const selectedUser = computed(() => selectedMatch.value?.user ?? { id: 0, nickname: '等待匹配', age: 0, city: '', job: '', purpose: '', dimensions: dna.value.dimensions, tags: [] })
 const selectedAnimalCombo = computed(() => selectedMatch.value?.report.combo ?? animalCombo(animal.value, selectedMatch.value?.user.animal))
 const pageTitles: Record<string, { step: string; label: string }> = {
-  auth: { step: '00', label: '登录 / 注册' }, profile: { step: '01', label: '初见档案' }, account: { step: '00', label: '个人中心' }, cards: { step: '02', label: '心智卡牌' }, dna: { step: '03', label: '社交基因' }, matches: { step: '04', label: '火花雷达' }, detail: { step: '04', label: '化学解析' }, connect: { step: '05', label: '线下接触' }, duo: { step: '06', label: '破冰对决' }, result: { step: '06', label: '初见结论' }, chat: { step: '04', label: '内在小孩对话' },
+  auth: { step: '00', label: '登录 / 注册' }, profile: { step: '01', label: '回声档案' }, account: { step: '00', label: '个人中心' }, cards: { step: '02', label: '心智卡牌' }, dna: { step: '03', label: '社交基因' }, matches: { step: '04', label: '火花雷达' }, detail: { step: '04', label: '化学解析' }, connect: { step: '05', label: '线下接触' }, duo: { step: '06', label: '破冰对决' }, result: { step: '06', label: '回声结论' }, chat: { step: '04', label: '内在小孩对话' },
 }
 
 const roundData = [
@@ -481,7 +481,7 @@ async function sendChat() {
             <path d="M12 7v10M7 12h10" stroke-width="1.75" stroke-linecap="round" />
             <circle cx="12" cy="12" r="3" fill="currentColor" />
           </svg>
-          <span class="brand-text">HEIKESONG <em>/ 初见</em></span>
+          <span class="brand-text">ECHO <em>/ 回声</em></span>
         </div>
         <div class="nav-tracker">
           <span class="nav-tag">{{ pageTitles[page]?.label }}</span>
@@ -856,7 +856,7 @@ async function sendChat() {
             <span>FIRST CHEMISTRY REPORT</span>
           </div>
           <h1 class="section-title">
-            你们的初见，<em>碰撞出了极佳的化学反应</em>
+            你们的回声，<em>碰撞出了极佳的化学反应</em>
           </h1>
           <p class="section-lead">
             破冰考验已顺利通关，以下是双方在实时互动中显现的心智共振指标。

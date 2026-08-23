@@ -1,7 +1,7 @@
 {
   "pages": ["pages/index/index", "pages/game/game"],
   "window": {
-    "navigationBarTitleText": "初见",
+    "navigationBarTitleText": "回声",
     "navigationBarBackgroundColor": "#0B1426",
     "navigationBarTextStyle": "white"
   },

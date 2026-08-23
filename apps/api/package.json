@@ -1,5 +1,5 @@
 {
-  "name": "@heikesong/api",
+  "name": "@echo/api",
   "private": true,
   "type": "module",
   "scripts": {

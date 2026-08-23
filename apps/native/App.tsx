@@ -15,7 +15,7 @@ const API_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://10.0.2.2:3000'
 const GAME_URL = process.env.EXPO_PUBLIC_GAME_URL ?? 'http://10.0.2.2:5173'
 const PROXIMITY_SERVICE = '7f4e0001-5b53-4a7c-9a9d-6a7c4e100001'
 const PROXIMITY_CHARACTERISTIC = '7f4e0001-5b53-4a7c-9a9d-6a7c4e100002'
-const PROXIMITY_DEVICE_KEY = 'heikesong-proximity-device'
+const PROXIMITY_DEVICE_KEY = 'echo-proximity-device'
 const queryClient = new QueryClient()
 
 type Room = { slug: string; title: string; gameUrl: string }
@@ -81,7 +81,7 @@ function App() {
       await BleManager.scan({ serviceUUIDs: [PROXIMITY_SERVICE], seconds: 0, allowDuplicates: false })
       let scanSubscription: ReturnType<typeof BleManager.onDiscoverPeripheral> | undefined
       scanSubscription = BleManager.onDiscoverPeripheral(async (device) => {
-        if (device.name !== 'HEIKESONG_NEAR') return
+        if (device.name !== 'ECHO_NEAR') return
         await announceProximity()
         scanSubscription?.remove()
         await BleManager.stopScan().catch(() => undefined)
@@ -91,7 +91,7 @@ function App() {
       blePeripheral.on('ready', async () => {
         await blePeripheral.addService(PROXIMITY_SERVICE, true)
         await blePeripheral.addCharacteristic(PROXIMITY_SERVICE, PROXIMITY_CHARACTERISTIC, Property.READ | Property.NOTIFY, Permission.READABLE)
-        await Peripheral.setDeviceName('HEIKESONG_NEAR')
+        await Peripheral.setDeviceName('ECHO_NEAR')
         await blePeripheral.startAdvertising({ [PROXIMITY_SERVICE]: Buffer.from('near') }, { connectable: true })
       })
     } catch {
@@ -173,7 +173,7 @@ function App() {
         <View style={styles.topbar}>
           <View style={styles.brandRow}>
             <View style={styles.brandDot} />
-            <Text style={styles.brand}>HEIKESONG <Text style={styles.brandEm}>/ 初见</Text></Text>
+            <Text style={styles.brand}>ECHO <Text style={styles.brandEm}>/ 回声</Text></Text>
           </View>
           <View style={styles.statusPill}>
             <Text style={styles.statusText}>OFFLINE READY</Text>
@@ -221,7 +221,7 @@ function App() {
             onPress={() => setProfileOpen((value) => !value)}
           >
             <Text style={[styles.actionText, profileOpen && styles.actionTextActive]}>
-              {profileOpen ? '收起我的档案' : '我的初见档案'}
+              {profileOpen ? '收起我的档案' : '我的回声档案'}
             </Text>
           </Pressable>
 
@@ -240,7 +240,7 @@ function App() {
           <View style={styles.panel}>
             <View style={styles.panelHeader}>
               <Text style={styles.panelTitle}>PERSONA MATRIX</Text>
-              <Text style={styles.panelSub}>初见档案</Text>
+              <Text style={styles.panelSub}>回声档案</Text>
             </View>
             <Text style={styles.profileName}>未命名旅人</Text>
             <Text style={styles.panelCopy}>设定一个专属称谓，给线下相遇留下优雅的第一印象。</Text>

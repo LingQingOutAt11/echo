@@ -1,5 +1,5 @@
 {
-  "name": "heikesong",
+  "name": "echo",
   "private": true,
   "workspaces": ["apps/*"],
   "scripts": {
