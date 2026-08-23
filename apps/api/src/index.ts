@@ -110,7 +110,7 @@ const selectGame = (a: Dimensions, b: Dimensions, report: ChemistryReport): Game
   if (socialContrast >= 30) return { id: 'constellation', name: '共同点亮星图', reason: '你们的社交节奏差异明显，适合用两颗星一起找到同一片天空。', mechanic: '双方分别移动自己的光标，合并触碰同色星点。', goal: '在 60 秒内共同点亮 8 颗星星。' }
   if (planningContrast >= 70) return { id: 'bridge', name: '搭桥回家', reason: '你们的计划与随性互补，适合一起搭出一条能走通的路。', mechanic: '双方轮流放置桥板，让小动物走到终点。', goal: '共同放置 6 块桥板并抵达终点。' }
   if (report.complements.length) return { id: 'relay', name: '默契接力', reason: '你们在主动与边界上有互补，适合用接力把节奏交给彼此。', mechanic: '一方收集光点，另一方负责开启下一段路线。', goal: '接力收集 10 个光点，不让能量归零。' }
-  return { id: 'treasure', name: '隐藏卡寻宝', reason: '你们的匹配节奏轻松，适合用 NFC 隐藏卡开启一场短途寻宝。', mechanic: '读取隐藏卡后，双方在地图上协作找出三个宝箱。', goal: '找到 3 个宝箱并把隐藏卡送给对方。' }
+  return { id: 'treasure', name: '隐藏卡寻宝', reason: '你们的匹配节奏轻松，适合扫码开启一场短途寻宝。', mechanic: '扫码连接后，双方在地图上协作找出三个宝箱。', goal: '找到 3 个宝箱并把隐藏卡送给对方。' }
 }
 
 const userRecord = (user: StoredUser) => ({ id: user.id, nickname: user.nickname, age: user.age, birth_datetime: user.birth_datetime, zodiac: user.zodiac, mbti: user.mbti, city: user.city, job: user.job, purpose: user.purpose, bio: user.bio, dimensions: user.dimensions, tags: user.tags, deal_breakers: user.deal_breakers, animal: user.animal })
@@ -456,20 +456,22 @@ const app = new Elysia()
     if (!userId) return status(401, { error: 'unauthorized' })
     if (database) {
       await database`DELETE FROM proximity_peers WHERE last_seen < ${new Date(now - 15_000)}`
-      const [existing] = await database`SELECT device_id, user_id, dual_session_id FROM proximity_peers WHERE device_id <> ${body.deviceId} AND last_seen > ${new Date(now - 15_000)} LIMIT 1`
+      const [existing] = body.targetDeviceId
+        ? await database`SELECT device_id, user_id, dual_session_id FROM proximity_peers WHERE device_id = ${body.targetDeviceId} AND device_id <> ${body.deviceId} AND last_seen > ${new Date(now - 15_000)} LIMIT 1`
+        : await database`SELECT device_id, user_id, dual_session_id FROM proximity_peers WHERE device_id <> ${body.deviceId} AND last_seen > ${new Date(now - 15_000)} LIMIT 1`
       let dualSessionId = existing?.dual_session_id as string | undefined
       if (existing?.user_id && Number(existing.user_id) !== userId && !dualSessionId) dualSessionId = (await createDualSession(Number(existing.user_id), userId))?.id
       await database`INSERT INTO proximity_peers (device_id, user_id, dual_session_id, last_seen) VALUES (${body.deviceId}, ${userId}, ${dualSessionId ?? null}, ${new Date(now)}) ON CONFLICT (device_id) DO UPDATE SET user_id = EXCLUDED.user_id, dual_session_id = EXCLUDED.dual_session_id, last_seen = EXCLUDED.last_seen`
       if (existing?.device_id && dualSessionId) await database`UPDATE proximity_peers SET dual_session_id = ${dualSessionId} WHERE device_id = ${existing.device_id}`
       return { nearby: Boolean(existing?.user_id && Number(existing.user_id) !== userId), sessionId: dualSessionId, game: dualSessionId ? proximityGame : undefined }
     }
-    const existing = [...memoryProximityPeers.values()].find((peer) => peer.deviceId !== body.deviceId && now - peer.lastSeen < 15_000)
+    const existing = [...memoryProximityPeers.values()].find((peer) => peer.deviceId !== body.deviceId && (!body.targetDeviceId || peer.deviceId === body.targetDeviceId) && now - peer.lastSeen < 15_000)
     let dualSessionId = existing?.dualSessionId
     if (existing?.userId && existing.userId !== userId && !dualSessionId) dualSessionId = (await createDualSession(existing.userId, userId))?.id
     memoryProximityPeers.set(body.deviceId, { deviceId: body.deviceId, lastSeen: now, userId, dualSessionId })
     if (existing && dualSessionId) existing.dualSessionId = dualSessionId
     return { nearby: Boolean(existing?.userId && existing.userId !== userId), sessionId: dualSessionId, game: dualSessionId ? proximityGame : undefined }
-  }, { body: t.Object({ deviceId: t.String({ minLength: 8, maxLength: 100 }) }) })
+  }, { body: t.Object({ deviceId: t.String({ minLength: 8, maxLength: 100 }), targetDeviceId: t.Optional(t.String({ minLength: 8, maxLength: 100 })) }) })
   .get('/proximity/:id', async ({ params, status }) => {
     if (database) {
       const [session] = await database`SELECT id, game, created_at FROM proximity_sessions WHERE id = ${params.id}`

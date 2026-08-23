@@ -67,7 +67,7 @@ const userId = ref<number | null>(Number(localStorage.getItem('ai-chemistry-user
 const matches = ref<Match[]>([])
 const selectedMatchId = ref<number | null>(null)
 const sessionId = ref<string | null>(null)
-const connectMethod = ref<'nfc' | 'qr' | 'proximity'>('nfc')
+const connectMethod = ref<'qr' | 'proximity'>('qr')
 const qrDataUrl = ref('')
 const proximityId = ref(new URLSearchParams(window.location.search).get('proximity') ?? '')
 const pendingProximity = ref(false)
@@ -287,12 +287,15 @@ onMounted(async () => {
   page.value = 'auth'
 })
 watch(page, async () => { await nextTick(); gsap.fromTo('.page-content', { autoAlpha: 0, y: 16 }, { autoAlpha: 1, y: 0, duration: 0.4, ease: 'power2.out' }) })
-watch(page, (current) => { if (current === 'connect') startProximityPolling(); else stopProximityPolling() })
+async function prepareQr() {
+  qrDataUrl.value = await QRCode.toDataURL(`${window.location.origin}/?proximity=${encodeURIComponent(deviceId.value)}`, { width: 240, margin: 1, color: { dark: '#0b1426', light: '#f4efe3' } })
+  // 出码方持续报到，扫码方携带目标设备 ID 定向加入
+  proximityError.value = ''
+}
+watch(page, (current) => { if (current === 'connect') { if (connectMethod.value === 'qr') void prepareQr(); startProximityPolling() } else stopProximityPolling() })
 watch(connectMethod, async (method) => {
   if (method !== 'qr') return
-  qrDataUrl.value = await QRCode.toDataURL(`${window.location.origin}/?proximity=join`, { width: 240, margin: 1, color: { dark: '#0b1426', light: '#f4efe3' } })
-  // 出码方生成二维码后立即进入配对等待，对方扫码加入即自动开玩
-  proximityError.value = ''
+  await prepareQr()
   startProximityPolling()
 })
 watch(page, (current) => {
@@ -427,12 +430,12 @@ async function startProximityPolling() {
   proximityTimer = setInterval(async () => {
     if (Date.now() > proximityDeadline) {
       stopProximityPolling()
-      proximityError.value = '等待超时，未检测到附近的设备。请确认对方也已打开本页面后重试。'
+      proximityError.value = '等待超时，请让对方重新扫描二维码后重试。'
       return
     }
     try {
-      const response = await fetch(`${API_URL}/proximity/announce`, { method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders() }, body: JSON.stringify({ deviceId: deviceId.value }) })
-      if (!response.ok) { proximityError.value = response.status === 501 ? '当前服务未开启近场配对，请改用扫码加入。' : '近场服务暂时不可用，请稍后重试。'; return }
+      const response = await fetch(`${API_URL}/proximity/announce`, { method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders() }, body: JSON.stringify({ deviceId: deviceId.value, targetDeviceId: proximityId.value || undefined }) })
+      if (!response.ok) { proximityError.value = '二维码配对服务暂时不可用，请稍后重试。'; return }
       const data = await response.json() as { nearby?: boolean; sessionId?: string }
       if (data.nearby && data.sessionId) {
         sessionId.value = data.sessionId
@@ -457,18 +460,6 @@ function enterDuo(id?: string) {
 }
 
 async function connect() {
-  connectMethod.value = 'proximity'
-  page.value = 'connect'
-  await announceProximity()
-  startProximityPolling()
-}
-
-async function announceProximity(device = deviceId.value): Promise<{ sessionId?: string }> {
-  try {
-    const response = await fetch(`${API_URL}/proximity/announce`, { method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders() }, body: JSON.stringify({ deviceId: device }) })
-    if (!response.ok) return {}
-    return await response.json() as { sessionId?: string }
-  } catch { return {} }
 }
 
 function stopDestinyPolling() {
@@ -487,10 +478,10 @@ function startDestinyPolling() {
   destinyTimer = setInterval(() => void refreshDestiny(), 1000)
 }
 async function startDestiny() {
-  if (!sessionId.value || sessionId.value.startsWith('mock-')) { destinyError.value = '需要两台已完成画像的手机完成碰一碰后，才能开启回声牌。'; return }
+  if (!sessionId.value || sessionId.value.startsWith('mock-')) { destinyError.value = '需要两台已完成画像的手机扫码配对后，才能开启回声牌。'; return }
   destinyError.value = ''
   const response = await apiFetch(`/dual-sessions/${sessionId.value}/destiny/start`, { method: 'POST' })
-  if (!response.ok) { destinyError.value = '回声牌会话未准备好，请让双方重新碰一碰。'; return }
+  if (!response.ok) { destinyError.value = '回声牌会话未准备好，请让双方重新扫码。'; return }
   destiny.value = await response.json() as DestinyState
   page.value = 'destiny'
   startDestinyPolling()
@@ -937,7 +928,7 @@ async function sendChat() {
             <span class="btn-text">在线聊天</span>
           </button>
           <button class="primary-btn" @click="connectMethod = 'qr'; page = 'connect'">
-            <span class="btn-text">生成二维码碰一碰</span>
+            <span class="btn-text">生成二维码</span>
             <div class="btn-arrow-box">
               <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10.293 3.293a1 1 0 011.414 0l6 6a1 1 0 010 1.414l-6 6a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-4.293-4.293a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
             </div>
@@ -945,51 +936,25 @@ async function sendChat() {
         </div>
       </section>
 
-      <!-- PAGE 06: Connect / NFC / QR -->
+      <!-- PAGE 06: QR pairing -->
       <section v-else-if="page === 'connect'" class="page-content connect-stage">
         <div class="stage-header text-center">
           <div class="pill-badge centered">
             <svg class="icon-sparkle" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0L9.5 6.5L16 8L9.5 9.5L8 16L6.5 9.5L0 8L6.5 6.5L8 0Z"/></svg>
-            <span>PHYSICAL HANDSHAKE</span>
+            <span>QR PAIRING</span>
           </div>
           <h1 class="section-title">
-            让第一次相遇，<em>拥有真实的仪式感。</em>
+            一个人生成，<em>一个人扫码。</em>
           </h1>
           <p class="section-lead">
-            当面碰一碰或扫码，双方手机将同步进入专属破冰交互空间。
+            扫码成功后，双方手机将同步进入专属破冰交互空间。
           </p>
-        </div>
-
-        <div v-if="connectMethod !== 'proximity'" class="method-toggle-container">
-          <button :class="{ active: connectMethod === 'nfc' }" class="toggle-btn" @click="connectMethod = 'nfc'">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="t-icon"><path d="M6 8.5C7.5 7 9.5 6 12 6s4.5 1 6 2.5M4 6c2.5-2.5 5.5-3.5 8-3.5s5.5 1 8 3.5M8 11.5c1.2-1 2.5-1.5 4-1.5s2.8.5 4 1.5M12 16a2 2 0 100-4 2 2 0 000 4z" stroke-width="1.75" stroke-linecap="round"/></svg>
-            NFC 碰一碰 (推荐)
-          </button>
-          <button :class="{ active: connectMethod === 'qr' }" class="toggle-btn" @click="connectMethod = 'qr'">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="t-icon"><rect x="3" y="3" width="7" height="7" stroke-width="1.75"/><rect x="14" y="3" width="7" height="7" stroke-width="1.75"/><rect x="3" y="14" width="7" height="7" stroke-width="1.75"/><path d="M14 14h3v3h-3zM18 18h3v3h-3zM14 18h3v3h-3zM18 14h3v3h-3z" fill="currentColor"/></svg>
-            扫码快速加入
-          </button>
         </div>
 
         <div class="interaction-terminal">
           <div class="terminal-corner tl" /><div class="terminal-corner tr" /><div class="terminal-corner bl" /><div class="terminal-corner br" />
 
-          <template v-if="connectMethod === 'nfc'">
-            <div class="nfc-animation-core">
-              <div class="pulse-ring ring-1" />
-              <div class="pulse-ring ring-2" />
-              <div class="pulse-ring ring-3" />
-              <div class="nfc-center-node">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="nfc-svg-icon">
-                  <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
-                </svg>
-              </div>
-            </div>
-            <h3 class="nfc-status-title">将两台手机背部靠近</h3>
-            <p class="nfc-status-sub">或在 NFC 破冰装置上轻触，即可秒级建立同频会话</p>
-          </template>
-
-          <template v-else-if="connectMethod === 'proximity'">
+          <template v-if="connectMethod === 'proximity'">
             <div class="nfc-animation-core">
               <div class="pulse-ring ring-1" />
               <div class="pulse-ring ring-2" />
@@ -1018,12 +983,6 @@ async function sendChat() {
           </template>
         </div>
 
-        <button v-if="connectMethod === 'nfc'" class="primary-btn" @click="connect">
-          <span class="btn-text">NFC 碰触连接</span>
-          <div class="btn-arrow-box">
-            <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10.293 3.293a1 1 0 011.414 0l6 6a1 1 0 010 1.414l-6 6a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-4.293-4.293a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
-          </div>
-        </button>
       </section>
 
       <!-- PAGE 07: Duo Game (3 Rounds) -->
