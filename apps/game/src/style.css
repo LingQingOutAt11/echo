@@ -1836,7 +1836,7 @@ button {
   font-size: 20px;
   font-weight: 800;
   letter-spacing: -0.02em;
-  color: var(--text-primary);
+  color: #111;
 }
 .chat-subtitle {
   font-size: 13px;
@@ -1894,13 +1894,14 @@ button {
 .chat-msg.user .chat-bubble {
   background: var(--accent-gold);
   border-color: var(--accent-gold);
-  color: #fff;
+  color: #111;
   border-bottom-right-radius: 4px;
 }
 .chat-msg:not(.user) .chat-bubble {
   border-bottom-left-radius: 4px;
 }
 .chat-text {
+  color: #111;
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -2068,7 +2069,8 @@ button {
 .destiny-card i { font: 24px serif; color: var(--destiny-accent); font-style: normal; }
 .destiny-card:hover, .destiny-card.pending { transform: translateY(-5px); background: #20434a; }
 .destiny-reveal { display: grid; gap: 14px; background: var(--panel-bg); border: 2px solid var(--pixel-border); box-shadow: 5px 5px 0 var(--pixel-border); padding: 16px; }
-.destiny-face { min-height: 175px; display: grid; place-items: center; align-content: center; gap: 7px; color: #fff; background: #152b31; border: 4px solid var(--destiny-accent); box-shadow: inset 0 0 0 5px #152b31, inset 0 0 0 7px var(--destiny-accent); }
+.destiny-face { min-height: 175px; overflow: hidden; background: #152b31; border: 4px solid var(--destiny-accent); box-shadow: inset 0 0 0 5px #152b31, inset 0 0 0 7px var(--destiny-accent); }
+.destiny-face img { width: 100%; height: 100%; min-height: 175px; display: block; object-fit: cover; }
 .destiny-face span, .destiny-copy > span { font: 800 10px var(--font-mono); letter-spacing: .1em; color: var(--destiny-accent); }
 .destiny-face strong { font: 900 66px var(--font-pixel), var(--font-mono); }
 .destiny-face i { color: var(--destiny-accent); font: 40px serif; font-style: normal; }
@@ -2101,4 +2103,4 @@ button {
   background: var(--rose-soft);
 }
 .chat-time { display: block; margin-top: 4px; font: 11px var(--font-mono); color: var(--text-muted); opacity: 0.75; }
-.chat-msg.user .chat-time { color: rgba(255,255,255,0.8); text-align: right; }
+.chat-msg.user .chat-time { color: #111; text-align: right; }

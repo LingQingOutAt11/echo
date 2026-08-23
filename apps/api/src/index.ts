@@ -11,7 +11,7 @@ process.on('unhandledRejection', (err) => console.error('[echo-api] unhandledRej
 type Dimensions = Record<string, number>
 type ChemistryReport = { total: number; complements: string[] }
 type Game = { id: 'constellation' | 'bridge' | 'relay' | 'treasure'; name: string; reason: string; mechanic: string; goal: string }
-type DestinyState = { phase: 'question' | 'draw' | 'card_pending' | 'revealed'; questionKey?: DestinyQuestionKey; selectedBy?: number; confirmedBy?: number; selectedAt?: number; deck: DestinyCardKey[]; cardKey?: DestinyCardKey; selectedCardBy?: number; confirmedCardBy?: number; cardSelectedAt?: number; comboKey?: ComboKey; comboName?: string; reading?: { prophecy: string; quote: string; opener: string }; createdAt: number }
+type DestinyState = { phase: 'question' | 'draw' | 'card_pending' | 'revealed'; questionKey?: DestinyQuestionKey; selectedBy?: number; confirmedBy?: number; selectedAt?: number; deck: DestinyCardKey[]; cardKey?: DestinyCardKey; selectedCardBy?: number; confirmedCardBy?: number; cardSelectedAt?: number; comboKey?: ComboKey; comboName?: string; reading?: { prophecy: string; quote: string; opener: string }; coverCard?: string; createdAt: number }
 type StoredSession = { id: string; user_a: number; user_b: number; game: Game; rounds: unknown[]; result: unknown; status: string; destiny?: DestinyState; created_at?: string }
 type StoredCard = { id: string; title: string; content: string; owner_id: number | null; claimed_at: string | null; transferred_at: string | null; former_owner_ids: number[] }
 type StoredAccount = { id: number; user_id: number; username: string; password_hash: string }
@@ -99,9 +99,10 @@ const ageFromBirth = (birth: string) => {
   return Math.max(18, Math.min(100, age))
 }
 const dimensionsSchema = t.Record(t.String(), t.Number({ minimum: 0, maximum: 100 }))
-const profileSchema = t.Object({ nickname: t.String({ minLength: 1, maxLength: 40 }), birth_datetime: t.String({ minLength: 10, maxLength: 40 }), zodiac: t.Union(ZODIACS.map((item) => t.Literal(item))), mbti: t.Union(MBTIS.map((item) => t.Literal(item))), city: t.String({ minLength: 1, maxLength: 40 }), job: t.String({ minLength: 1, maxLength: 80 }), purpose: t.Union([t.Literal('恋爱'), t.Literal('朋友'), t.Literal('搭子')]), bio: t.Optional(t.String({ maxLength: 200 })), avatarUrl: t.Optional(t.String({ maxLength: 500 })) })
+const genderSchema = t.Union([t.Literal('male'), t.Literal('female')])
+const profileSchema = t.Object({ nickname: t.String({ minLength: 1, maxLength: 40 }), birth_datetime: t.String({ minLength: 10, maxLength: 40 }), gender: genderSchema, zodiac: t.Union(ZODIACS.map((item) => t.Literal(item))), mbti: t.Union(MBTIS.map((item) => t.Literal(item))), city: t.String({ minLength: 1, maxLength: 40 }), job: t.String({ minLength: 1, maxLength: 80 }), purpose: t.Union([t.Literal('恋爱'), t.Literal('朋友'), t.Literal('搭子')]), bio: t.Optional(t.String({ maxLength: 200 })), avatarUrl: t.Optional(t.String({ maxLength: 500 })) })
 const credentialsSchema = t.Object({ username: t.String({ minLength: 2, maxLength: 40, pattern: '^\\S+$' }), password: t.String({ minLength: 6, maxLength: 100 }) })
-const registerSchema = t.Object({ username: t.String({ minLength: 2, maxLength: 40, pattern: '^\\S+$' }), password: t.String({ minLength: 6, maxLength: 100 }), nickname: t.String({ minLength: 1, maxLength: 40 }), birth_datetime: t.String({ minLength: 10, maxLength: 40 }), zodiac: t.Union(ZODIACS.map((item) => t.Literal(item))), mbti: t.Union(MBTIS.map((item) => t.Literal(item))), city: t.String({ minLength: 1, maxLength: 40 }), job: t.String({ minLength: 1, maxLength: 80 }), purpose: t.Union([t.Literal('恋爱'), t.Literal('朋友'), t.Literal('搭子')]), bio: t.Optional(t.String({ maxLength: 200 })), avatarUrl: t.Optional(t.String({ maxLength: 500 })) })
+const registerSchema = t.Object({ username: t.String({ minLength: 2, maxLength: 40, pattern: '^\\S+$' }), password: t.String({ minLength: 6, maxLength: 100 }), nickname: t.String({ minLength: 1, maxLength: 40 }), birth_datetime: t.String({ minLength: 10, maxLength: 40 }), gender: genderSchema, zodiac: t.Union(ZODIACS.map((item) => t.Literal(item))), mbti: t.Union(MBTIS.map((item) => t.Literal(item))), city: t.String({ minLength: 1, maxLength: 40 }), job: t.String({ minLength: 1, maxLength: 80 }), purpose: t.Union([t.Literal('恋爱'), t.Literal('朋友'), t.Literal('搭子')]), bio: t.Optional(t.String({ maxLength: 200 })), avatarUrl: t.Optional(t.String({ maxLength: 500 })) })
 
 
 const selectGame = (a: Dimensions, b: Dimensions, report: ChemistryReport): Game => {
@@ -113,7 +114,7 @@ const selectGame = (a: Dimensions, b: Dimensions, report: ChemistryReport): Game
   return { id: 'treasure', name: '隐藏卡寻宝', reason: '你们的匹配节奏轻松，适合扫码开启一场短途寻宝。', mechanic: '扫码连接后，双方在地图上协作找出三个宝箱。', goal: '找到 3 个宝箱并把隐藏卡送给对方。' }
 }
 
-const userRecord = (user: StoredUser) => ({ id: user.id, nickname: user.nickname, age: user.age, birth_datetime: user.birth_datetime, zodiac: user.zodiac, mbti: user.mbti, city: user.city, job: user.job, purpose: user.purpose, bio: user.bio, dimensions: user.dimensions, tags: user.tags, deal_breakers: user.deal_breakers, animal: user.animal })
+const userRecord = (user: StoredUser) => ({ id: user.id, nickname: user.nickname, age: user.age, birth_datetime: user.birth_datetime, gender: user.gender === 'male' ? 'male' : 'female', zodiac: user.zodiac, mbti: user.mbti, city: user.city, job: user.job, purpose: user.purpose, bio: user.bio, dimensions: user.dimensions, tags: user.tags, deal_breakers: user.deal_breakers, animal: user.animal })
 const reportFor = (a: StoredUser, b: StoredUser) => chemistry(a.dimensions as Dimensions, b.dimensions as Dimensions, a.tags, b.tags, a.deal_breakers, b.deal_breakers, a.animal, b.animal)
 
 const hashPassword = async (password: string) => Buffer.from(await Bun.password.hash(password, { algorithm: 'argon2id' })).toString('base64')
@@ -128,7 +129,7 @@ const memoryAccountForToken = (headers: Record<string, string | undefined>) => {
 }
 const findUser = async (userId: number) => {
   if (database) {
-    const [user] = await database`SELECT id, nickname, age, birth_datetime, zodiac, mbti, city, job, purpose, bio, dimensions, animal, tags, deal_breakers FROM users WHERE id = ${userId}`
+    const [user] = await database`SELECT id, nickname, age, birth_datetime, gender, zodiac, mbti, city, job, purpose, bio, dimensions, animal, tags, deal_breakers FROM users WHERE id = ${userId}`
     return user as StoredUser | undefined
   }
   return memoryUsers.get(userId)
@@ -199,7 +200,7 @@ const tarotReadingFor = async (session: StoredSession, questionKey: DestinyQuest
     const response = await fetch(process.env.TAROT_API_URL ?? 'https://hackathon.starrytalk.com/v1/tarot/reading', {
       method: 'POST',
       headers: { 'content-type': 'application/json', accept: 'text/event-stream', authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({ query: query.slice(0, 500), gender: process.env.TAROT_GENDER === 'male' ? 'male' : 'female', age: Math.max(1, Math.min(120, Number(userA?.age) || 25)), spread: 'three_card', user_id: String(session.user_a) }),
+      body: JSON.stringify({ query: query.slice(0, 500), gender: userA?.gender === 'male' ? 'male' : 'female', age: Math.max(1, Math.min(120, Number(userA?.age) || 25)), spread: 'three_card', user_id: String(session.user_a) }),
       signal: AbortSignal.timeout(45_000),
     })
     if (!response.ok) return undefined
@@ -247,7 +248,7 @@ const app = new Elysia()
       const [existing] = await database`SELECT id FROM auth_accounts WHERE username = ${username}`
       if (existing) return status(409, { error: 'username_taken' })
       const created = await database.begin(async (tx) => {
-        const [user] = await tx`INSERT INTO users (nickname, age, birth_datetime, zodiac, mbti, city, job, purpose, bio, avatar_url) VALUES (${body.nickname}, ${ageFromBirth(body.birth_datetime)}, ${body.birth_datetime}, ${body.zodiac}, ${body.mbti}, ${body.city}, ${body.job}, ${body.purpose}, ${body.bio ?? ''}, ${body.avatarUrl ?? ''}) RETURNING id, nickname, age, birth_datetime, zodiac, mbti, city, job, purpose, bio, dimensions, animal, tags, deal_breakers`
+        const [user] = await tx`INSERT INTO users (nickname, age, birth_datetime, gender, zodiac, mbti, city, job, purpose, bio, avatar_url) VALUES (${body.nickname}, ${ageFromBirth(body.birth_datetime)}, ${body.birth_datetime}, ${body.gender}, ${body.zodiac}, ${body.mbti}, ${body.city}, ${body.job}, ${body.purpose}, ${body.bio ?? ''}, ${body.avatarUrl ?? ''}) RETURNING id, nickname, age, birth_datetime, gender, zodiac, mbti, city, job, purpose, bio, dimensions, animal, tags, deal_breakers`
         const [account] = await tx`INSERT INTO auth_accounts (user_id, username, password_hash) VALUES (${user.id}, ${username}, ${passwordHash}) RETURNING id, username, user_id`
         const token = tokenFor(Number(account.id))
         await tx`INSERT INTO auth_sessions (token, user_id, account_id, expires_at) VALUES (${token}, ${user.id}, ${account.id}, ${expiresAt})`
@@ -256,7 +257,7 @@ const app = new Elysia()
       return { token: created.token, username, user: userRecord(created.user as StoredUser) }
     }
     if ([...memoryAccounts.values()].some((account) => account.username === username)) return status(409, { error: 'username_taken' })
-    const user: StoredUser = { id: nextUserId++, nickname: body.nickname, age: ageFromBirth(body.birth_datetime), birth_datetime: body.birth_datetime, zodiac: body.zodiac, mbti: body.mbti, city: body.city, job: body.job, purpose: body.purpose, bio: body.bio ?? '', tags: [], deal_breakers: [] }
+    const user: StoredUser = { id: nextUserId++, nickname: body.nickname, age: ageFromBirth(body.birth_datetime), birth_datetime: body.birth_datetime, gender: body.gender, zodiac: body.zodiac, mbti: body.mbti, city: body.city, job: body.job, purpose: body.purpose, bio: body.bio ?? '', tags: [], deal_breakers: [] }
     const account: StoredAccount = { id: nextAccountId++, user_id: user.id, username, password_hash: passwordHash }
     const token = tokenFor(account.id)
     memoryUsers.set(user.id, user)
@@ -268,11 +269,11 @@ const app = new Elysia()
     const username = body.username.trim().toLowerCase()
     const expiresAt = new Date(Date.now() + AUTH_TTL_MS)
     if (database) {
-      const [account] = await database`SELECT a.id, a.user_id, a.username, a.password_hash, u.id AS uid, u.nickname, u.age, u.birth_datetime, u.zodiac, u.mbti, u.city, u.job, u.purpose, u.bio, u.dimensions, u.animal, u.tags, u.deal_breakers FROM auth_accounts a JOIN users u ON u.id = a.user_id WHERE a.username = ${username}`
+      const [account] = await database`SELECT a.id, a.user_id, a.username, a.password_hash, u.id AS uid, u.nickname, u.age, u.birth_datetime, u.gender, u.zodiac, u.mbti, u.city, u.job, u.purpose, u.bio, u.dimensions, u.animal, u.tags, u.deal_breakers FROM auth_accounts a JOIN users u ON u.id = a.user_id WHERE a.username = ${username}`
       if (!account || !(await verifyPassword(body.password, account.password_hash))) return status(401, { error: 'invalid_credentials' })
       const token = tokenFor(Number(account.id))
       await database`INSERT INTO auth_sessions (token, user_id, account_id, expires_at) VALUES (${token}, ${account.user_id}, ${account.id}, ${expiresAt})`
-      const user = { id: Number(account.uid), nickname: account.nickname, age: account.age, birth_datetime: account.birth_datetime, zodiac: account.zodiac, mbti: account.mbti, city: account.city, job: account.job, purpose: account.purpose, bio: account.bio, dimensions: account.dimensions, animal: account.animal, tags: account.tags ?? [], deal_breakers: account.deal_breakers ?? [] } as StoredUser
+      const user = { id: Number(account.uid), nickname: account.nickname, age: account.age, birth_datetime: account.birth_datetime, gender: account.gender, zodiac: account.zodiac, mbti: account.mbti, city: account.city, job: account.job, purpose: account.purpose, bio: account.bio, dimensions: account.dimensions, animal: account.animal, tags: account.tags ?? [], deal_breakers: account.deal_breakers ?? [] } as StoredUser
       return { token, username, user: userRecord(user) }
     }
     const account = [...memoryAccounts.values()].find((item) => item.username === username)
@@ -313,12 +314,12 @@ const app = new Elysia()
     const authUserId = await userIdFromAuth(headers)
     if (!authUserId) return status(401, { error: 'unauthorized' })
     if (database) {
-      const [user] = await database`UPDATE users SET nickname = ${body.nickname}, age = ${ageFromBirth(body.birth_datetime)}, birth_datetime = ${body.birth_datetime}, zodiac = ${body.zodiac}, mbti = ${body.mbti}, city = ${body.city}, job = ${body.job}, purpose = ${body.purpose}, bio = ${body.bio ?? ''}, avatar_url = ${body.avatarUrl ?? ''} WHERE id = ${authUserId} RETURNING id, nickname, age, birth_datetime, zodiac, mbti, city, job, purpose, bio, dimensions, animal, tags, deal_breakers`
+      const [user] = await database`UPDATE users SET nickname = ${body.nickname}, age = ${ageFromBirth(body.birth_datetime)}, birth_datetime = ${body.birth_datetime}, gender = ${body.gender}, zodiac = ${body.zodiac}, mbti = ${body.mbti}, city = ${body.city}, job = ${body.job}, purpose = ${body.purpose}, bio = ${body.bio ?? ''}, avatar_url = ${body.avatarUrl ?? ''} WHERE id = ${authUserId} RETURNING id, nickname, age, birth_datetime, gender, zodiac, mbti, city, job, purpose, bio, dimensions, animal, tags, deal_breakers`
       return user ?? status(404, { error: 'user_not_found' })
     }
     const user = memoryUsers.get(authUserId)
     if (!user) return status(404, { error: 'user_not_found' })
-    Object.assign(user, { nickname: body.nickname, age: ageFromBirth(body.birth_datetime), birth_datetime: body.birth_datetime, zodiac: body.zodiac, mbti: body.mbti, city: body.city, job: body.job, purpose: body.purpose, bio: body.bio ?? '' })
+    Object.assign(user, { nickname: body.nickname, age: ageFromBirth(body.birth_datetime), birth_datetime: body.birth_datetime, gender: body.gender, zodiac: body.zodiac, mbti: body.mbti, city: body.city, job: body.job, purpose: body.purpose, bio: body.bio ?? '' })
     return userRecord(user)
   }, { body: profileSchema })
   .post('/users/:id/answers', async ({ params, body, headers, status }) => {
@@ -456,7 +457,7 @@ const app = new Elysia()
     const session = await readSession(params.id)
     if (!session) return status(404, { error: 'session_not_found' })
     if (!(await sessionParticipant(session, headers))) return status(401, { error: 'unauthorized' })
-    const destiny = readJson<DestinyState>(session.destiny) ?? { phase: 'question' as const, deck: shuffledDestinyDeck(), createdAt: Date.now() }
+    const destiny = readJson<DestinyState>(session.destiny) ?? { phase: 'question' as const, deck: shuffledDestinyDeck(), coverCard: ['r01', 'r02', 'l01', 'l02', 'v01', 'm01', 'b01', 'd01'][Math.floor(Math.random() * 8)], createdAt: Date.now() }
     return saveDestiny(session, destiny)
   }, { params: t.Object({ id: t.String({ minLength: 1, maxLength: 100 }) }) })
   .get('/dual-sessions/:id/destiny', async ({ params, headers, status }) => {
@@ -532,12 +533,12 @@ const app = new Elysia()
     const upstream = await fetch(process.env.COMPANION_API_URL ?? 'https://hackathon.starrytalk.com/v1/companion/chat', {
       method: 'POST',
       headers: { 'content-type': 'application/json', accept: 'text/event-stream', authorization: `Bearer ${upstreamKey}` },
-      body: JSON.stringify({ query: body.query, user_id: String(authUserId), ...(body.system_prompt ? { system_prompt: body.system_prompt } : {}) }),
+      body: JSON.stringify({ query: body.query.trim().slice(0, 500), user_id: String(authUserId), ...(body.system_prompt ? { system_prompt: body.system_prompt.slice(0, 4000) } : {}) }),
       signal: AbortSignal.timeout(60_000),
     })
     if (!upstream.ok) return new Response(await upstream.text(), { status: upstream.status, headers: { 'content-type': upstream.headers.get('content-type') ?? 'application/json' } })
     return upstream
-  }, { body: t.Object({ query: t.String({ minLength: 1, maxLength: 500 }), user_id: t.Optional(t.String({ maxLength: 64 })), system_prompt: t.Optional(t.String({ maxLength: 4000 })) }) })
+  }, { body: t.Object({ query: t.String({ minLength: 1, maxLength: 500 }), user_id: t.Optional(t.String({ maxLength: 64 })), system_prompt: t.Optional(t.String({ maxLength: 8000 })) }) })
   .get('/nfc-cards/:id', async ({ params, headers, status }) => {
     const userId = await userIdFromAuth(headers)
     if (!userId) return status(401, { error: 'unauthorized' })

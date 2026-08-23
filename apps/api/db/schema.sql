@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS users (
   nickname TEXT NOT NULL,
   age INTEGER NOT NULL CHECK (age BETWEEN 18 AND 100),
   birth_datetime TEXT NOT NULL DEFAULT '',
+  gender TEXT NOT NULL DEFAULT 'female' CHECK (gender IN ('male', 'female')),
   zodiac TEXT NOT NULL DEFAULT '',
   mbti TEXT NOT NULL DEFAULT '',
   city TEXT NOT NULL,

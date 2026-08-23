@@ -21,4 +21,11 @@ if (!appliedV2) {
   await database`INSERT INTO schema_migrations (version) VALUES ('v2')`
   console.log('Database schema applied (v2)')
 }
+
+const [appliedV3] = await database`SELECT version FROM schema_migrations WHERE version = 'v3'`
+if (!appliedV3) {
+  await database`ALTER TABLE users ADD COLUMN IF NOT EXISTS gender TEXT NOT NULL DEFAULT 'female' CHECK (gender IN ('male', 'female'))`
+  await database`INSERT INTO schema_migrations (version) VALUES ('v3')`
+  console.log('Database schema applied (v3)')
+}
 await database.close()
