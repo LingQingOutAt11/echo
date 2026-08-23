@@ -1,3 +1,5 @@
+import { EXTRA_CARDS } from './questions'
+
 export type Dimension = 'explore' | 'deep_talk' | 'initiative' | 'spontaneity' | 'emotion' | 'boundary' | 'planning' | 'social_battery' | 'chill' | 'chaos' | 'cling' | 'wit'
 export type Dimensions = Record<Dimension, number>
 export type Option = { label: string; text: string; weights?: Partial<Record<Dimension, number>>; tags?: string[] }
@@ -82,4 +84,5 @@ export const CARDS: Card[] = [
   card('X02', '开放题', '派对现场', '一个人都不认识的派对，你会？', [{ label: 'A', text: '主动找人聊', weights: { initiative: 20 } }, { label: 'B', text: '等别人来', weights: { boundary: 15 } }, { label: 'C', text: '先观察', weights: { emotion: 10, planning: 5 } }, { label: 'D', text: '直接离开', weights: { boundary: 20 } }]),
   card('X03', '开放题', '最后一班车', '旅行快结束时，你发现还有一个地方没去。', [{ label: 'A', text: '现在就去', weights: { explore: 20, spontaneity: 20 } }, { label: 'B', text: '下次再来', weights: { planning: 10, boundary: 10 } }, { label: 'C', text: '查好路线再去', weights: { planning: 20 } }, { label: 'D', text: '问同行者', weights: { deep_talk: 10, initiative: 5 } }]),
   card('X04', '开放题', '一小时空档', '突然多出一小时，你会？', [{ label: 'A', text: '找朋友', weights: { initiative: 10, emotion: 10 } }, { label: 'B', text: '一个人发呆', weights: { boundary: 15 } }, { label: 'C', text: '探索附近', weights: { explore: 15, spontaneity: 10 } }, { label: 'D', text: '完成待办', weights: { planning: 20 } }]),
+  ...EXTRA_CARDS,
 ]
