@@ -162,7 +162,8 @@ const apiFetch = (path: string, options: RequestInit = {}) => fetch(`${API_URL}$
 const selectedMessages = computed(() => selectedMatch.value ? history.value.messages.filter((message) => message.sender_id === selectedMatch.value!.user.id || message.receiver_id === selectedMatch.value!.user.id) : [])
 
 async function syncAnswered(userId: number) {
-  const local = JSON.parse(localStorage.getItem(answeredStorageKey(userId)) ?? '[]') as string[]
+  let local: string[] = []
+  try { local = JSON.parse(localStorage.getItem(answeredStorageKey(userId)) ?? '[]') as string[] } catch { /* 缓存损坏时忽略 */ }
   const response = await apiFetch(`/users/${userId}/answers`)
   if (!response.ok) { answeredCardIds.value = local; return }
   const data = await response.json() as { answeredCardIds?: string[] }
@@ -178,7 +179,7 @@ async function loadAccount() {
   if (!authToken.value) return false
   try {
     const response = await apiFetch('/auth/me')
-    if (!response.ok) { authToken.value = ''; localStorage.removeItem('ai-chemistry-auth-token'); return false }
+    if (!response.ok) { authToken.value = ''; userId.value = null; localStorage.removeItem('ai-chemistry-auth-token'); localStorage.removeItem('ai-chemistry-user-id'); return false }
     const data = await response.json() as { user: User }
     currentUser.value = data.user; userId.value = data.user.id
     profile.value = { nickname: data.user.nickname, birth_datetime: data.user.birth_datetime ?? '', zodiac: data.user.zodiac ?? '', mbti: data.user.mbti ?? '', city: data.user.city, job: data.user.job, purpose: data.user.purpose as '恋爱' | '朋友' | '搭子', bio: data.user.bio }
@@ -192,6 +193,11 @@ async function loadAccount() {
 }
 async function submitAuth() {
   error.value = ''
+  if (authMode.value === 'register') {
+    if (authForm.value.username.trim().length < 2 || /\s/.test(authForm.value.username)) { error.value = '用户名需 2-40 位且不能包含空格'; return }
+    if (authForm.value.password.length < 6) { error.value = '密码至少 6 位'; return }
+    if (!authForm.value.purpose) { error.value = '请选择来意'; return }
+  }
   const body = authMode.value === 'register' ? { ...authForm.value } : { username: authForm.value.username, password: authForm.value.password }
   try {
     const response = await apiFetch(`/auth/${authMode.value}`, { method: 'POST', body: JSON.stringify(body) })
@@ -411,7 +417,17 @@ async function nextRound() {
     return
   }
   if (sessionId.value && !sessionId.value.startsWith('mock-')) {
-    try { await apiFetch(`/dual-sessions/${sessionId.value}`, { method: 'PATCH', body: JSON.stringify({ rounds: roundScores.value, result: chemistryResult.value }) }) } catch { /* keep local result visible */ }
+    try {
+      const patchResponse = await apiFetch(`/dual-sessions/${sessionId.value}`, { method: 'PATCH', body: JSON.stringify({ rounds: roundScores.value, result: chemistryResult.value }) })
+      if (!patchResponse.ok) {
+        // proximity/mock 会话不在 dual-sessions 表:自动创建正式会话落库,让破冰历史可见
+        const created = await apiFetch('/dual-sessions', { method: 'POST', body: JSON.stringify({ userA: userId.value, userB: userId.value }) })
+        if (created.ok) {
+          const session = await created.json() as { id: string }
+          await apiFetch(`/dual-sessions/${session.id}`, { method: 'PATCH', body: JSON.stringify({ rounds: roundScores.value, result: chemistryResult.value }) })
+        }
+      }
+    } catch { /* keep local result visible */ }
   }
   await loadHistory()
   page.value = 'result'
@@ -573,7 +589,7 @@ async function sendChat() {
         </div>
       </header>
 
-      <section v-if="page === 'auth'" class="page-content auth-stage"><div class="stage-header text-center"><div class="pill-badge centered">SOCIAL DNA ACCESS</div><h1 class="section-title">先登录，<em>再认识真正的自己。</em></h1><p class="section-lead">注册后你的动物塑、性格光谱和沟通记录都会保存在个人中心。</p></div><div class="auth-mode-switch"><button type="button" :class="{ active: authMode === 'login' }" @click="authMode = 'login'">登录</button><button type="button" :class="{ active: authMode === 'register' }" @click="authMode = 'register'">注册</button></div><form class="glass-panel auth-card" @submit.prevent="submitAuth"><div class="input-group"><label><span class="label-txt">用户名 / USERNAME</span><input v-model.trim="authForm.username" minlength="2" maxlength="40" required /></label></div><div class="input-group"><label><span class="label-txt">密码 / PASSWORD</span><input v-model="authForm.password" type="password" minlength="6" required /></label></div><template v-if="authMode === 'register'"><div class="form-grid auth-register-grid"><div class="input-group"><label><span class="label-txt">昵称 / NAME</span><input v-model.trim="authForm.nickname" required /></label></div><div class="input-group"><label><span class="label-txt">出生日期时间 / BIRTH</span><input v-model="authForm.birth_datetime" type="datetime-local" required @click="openPicker" /></label></div><div class="input-group"><label><span class="label-txt">星座 / ZODIAC</span><select v-model="authForm.zodiac" required><option value="" disabled>选择星座</option><option v-for="item in ZODIACS" :key="item" :value="item">{{ item }}</option></select></label></div><div class="input-group"><label><span class="label-txt">MBTI</span><select v-model="authForm.mbti" required><option value="" disabled>选择 MBTI</option><option v-for="item in MBTIS" :key="item" :value="item">{{ item }}</option></select></label></div><div class="input-group"><label><span class="label-txt">城市 / CITY</span><input v-model.trim="authForm.city" required /></label></div><div class="input-group"><label><span class="label-txt">职业 / OCCUPATION</span><input v-model.trim="authForm.job" required /></label></div></div></template><div v-if="error" class="error-banner"><span>{{ error }}</span></div><button class="primary-btn" type="submit"><span class="btn-text">{{ authMode === 'login' ? '登录个人中心' : '创建账号并开始' }}</span><span class="btn-arrow-box">→</span></button></form></section>
+      <section v-if="page === 'auth'" class="page-content auth-stage"><div class="stage-header text-center"><div class="pill-badge centered">SOCIAL DNA ACCESS</div><h1 class="section-title">先登录，<em>再认识真正的自己。</em></h1><p class="section-lead">注册后你的动物塑、性格光谱和沟通记录都会保存在个人中心。</p></div><div class="auth-mode-switch"><button type="button" :class="{ active: authMode === 'login' }" @click="authMode = 'login'">登录</button><button type="button" :class="{ active: authMode === 'register' }" @click="authMode = 'register'">注册</button></div><form class="glass-panel auth-card" @submit.prevent="submitAuth"><div class="input-group"><label><span class="label-txt">用户名 / USERNAME</span><input v-model.trim="authForm.username" minlength="2" maxlength="40" required /></label></div><div class="input-group"><label><span class="label-txt">密码 / PASSWORD</span><input v-model="authForm.password" type="password" minlength="6" required /></label></div><template v-if="authMode === 'register'"><div class="form-grid auth-register-grid"><div class="input-group"><label><span class="label-txt">昵称 / NAME</span><input v-model.trim="authForm.nickname" required /></label></div><div class="input-group"><label><span class="label-txt">出生日期时间 / BIRTH</span><input v-model="authForm.birth_datetime" type="datetime-local" required @click="openPicker" /></label></div><div class="input-group"><label><span class="label-txt">星座 / ZODIAC</span><select v-model="authForm.zodiac" required><option value="" disabled>选择星座</option><option v-for="item in ZODIACS" :key="item" :value="item">{{ item }}</option></select></label></div><div class="input-group"><label><span class="label-txt">MBTI</span><select v-model="authForm.mbti" required><option value="" disabled>选择 MBTI</option><option v-for="item in MBTIS" :key="item" :value="item">{{ item }}</option></select></label></div><div class="input-group"><label><span class="label-txt">城市 / CITY</span><input v-model.trim="authForm.city" required /></label></div><div class="input-group"><label><span class="label-txt">职业 / OCCUPATION</span><input v-model.trim="authForm.job" required /></label></div><div class="input-group"><label><span class="label-txt">来意 / PURPOSE</span><select v-model="authForm.purpose" required><option value="恋爱">恋爱</option><option value="朋友">朋友</option><option value="搭子">搭子</option></select></label></div></div></template><div v-if="error" class="error-banner"><span>{{ error }}</span></div><button class="primary-btn" type="submit"><span class="btn-text">{{ authMode === 'login' ? '登录个人中心' : '创建账号并开始' }}</span><span class="btn-arrow-box">→</span></button></form></section>
       <section v-else-if="page === 'account'" class="page-content account-stage"><div class="stage-header"><div class="pill-badge">MY CHEMISTRY PROFILE</div><h1 class="section-title">{{ currentUser?.nickname }} 的<em>动物塑档案。</em></h1><p class="section-lead">保存你的动物塑图片、12 维性格光谱和沟通记录。</p></div><article v-if="currentUser?.animal" class="account-animal-card"><img :src="currentUser.animal.image" :alt="currentUser.animal.name" class="account-animal-image" /><div class="account-animal-copy"><span class="totem-tag">YOUR SOCIAL DNA</span><h2>{{ currentUser.animal.name }} · {{ currentUser.animal.title }}</h2><p>{{ currentUser.animal.tagline }}</p></div><button class="primary-btn account-radar-btn" @click="openMatches"><span class="btn-text">进入火花雷达</span></button>
 <button class="primary-btn account-chat-btn" @click="openChat"><span class="btn-text">和内在小孩聊聊 💬</span></button></article><article v-else class="glass-panel account-empty"><h2>还没有动物塑结果</h2><p>完成心智卡牌后生成专属卡片。</p><button class="primary-btn" @click="page = 'profile'"><span class="btn-text">开始测算</span><span class="btn-arrow-box">→</span></button></article><div v-if="currentUser?.dimensions" class="account-dimensions"><div v-for="item in DIMENSIONS" :key="item.id" class="dim-card"><div class="dim-info"><span class="dim-name">{{ item.group }} · {{ item.label }}</span><span class="dim-score">{{ currentUser.dimensions[item.id] }}</span></div><div class="dim-bar-track"><div class="dim-bar-fill" :style="{ width: `${currentUser.dimensions[item.id]}%` }" /></div></div></div><div class="account-columns"><article class="glass-panel history-card"><span class="panel-tag">COMMUNICATION LOG</span><p v-for="message in history.messages" :key="message.id" class="history-item">{{ message.content }}</p><p v-if="!history.messages.length" class="empty-history">还没有文字沟通记录。</p></article><article class="glass-panel history-card"><span class="panel-tag">ICEBREAKER HISTORY</span><p v-for="session in history.sessions" :key="session.id" class="history-item">{{ session.partner_nickname ?? '匹配伙伴' }} · {{ session.status }}</p><p v-if="!history.sessions.length" class="empty-history">还没有破冰会话记录。</p></article></div></section>
       <!-- PAGE 01: Profile Landing -->
